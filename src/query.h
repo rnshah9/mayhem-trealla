@@ -60,7 +60,7 @@ bool cut_if_det(query *q);
 bool is_in_ref_list(cell *c, pl_idx_t c_ctx, reflist *rlist);
 bool collect_vars(query *q, cell *p1, pl_idx_t p1_ctx);
 void make_indirect(cell *tmp, cell *c);
-bool check_list(query *q, cell *p1, pl_idx_t p1_ctx, bool *is_partial);
+bool check_list(query *q, cell *p1, pl_idx_t p1_ctx, bool *is_partial, pl_int_t *skip);
 
 int compare(query *q, cell *p1, pl_idx_t p1_ctx, cell *p2, pl_idx_t p2_ctx);
 bool unify(query *q, cell *p1, pl_idx_t p1_ctx, cell *p2, pl_idx_t p2_ctx);
@@ -100,7 +100,12 @@ pl_status fn_sys_soft_inner_cut_0(query *q);
 
 struct reflist_ {
 	reflist *next;
-	pl_idx_t var_nbr, ctx;
+	pl_idx_t ctx;
+
+	union {
+		cell *ptr;
+		pl_idx_t var_nbr;
+	};
 };
 
 struct cycle_info_ {
