@@ -156,7 +156,7 @@ static cell *deep_copy2_to_tmp(query *q, cell *p1, pl_idx_t p1_ctx, unsigned dep
 		if (!is_variable(p1))
 			return tmp;
 
-		if (nonlocals_only && (p1_ctx <= q->st.curr_frame))
+		if (nonlocals_only && (p1_ctx != q->st.curr_frame))
 			return tmp;
 
 		const frame *f = GET_FRAME(p1_ctx);
@@ -210,19 +210,19 @@ static cell *deep_copy2_to_tmp(query *q, cell *p1, pl_idx_t p1_ctx, unsigned dep
 		if (is_in_ref_list2(c, c_ctx, list)) {
 			cell *tmp = alloc_on_tmp(q, 1);
 			if (!tmp) return NULL;
-			tmp->tag = TAG_VAR;
-			tmp->flags = 0;
-			tmp->var_nbr = create_vars(q, 1); // new unbound var
-			tmp->val_off = g_anon_s;
-			break;
+			*tmp = *p1;
+			tmp->var_nbr = q->st.m->pl->tab2[0];
+			tmp->flags |= FLAG_VAR_FRESH;
+			//tmp->attrs = NULL;
+		} else {
+			nlist.next = list;
+			nlist.ptr = save_p1;
+			nlist.ctx = p1_ctx;
+
+			cell *rec = deep_copy2_to_tmp(q, c, c_ctx, depth+1, nonlocals_only, &nlist);
+			if (!rec || (rec == ERR_CYCLE_CELL)) return rec;
 		}
 
-		nlist.next = list;
-		nlist.ptr = save_p1;
-		nlist.ctx = p1_ctx;
-
-		cell *rec = deep_copy2_to_tmp(q, c, c_ctx, depth+1, nonlocals_only, &nlist);
-		if (!rec || (rec == ERR_CYCLE_CELL)) return rec;
 		p1 += p1->nbr_cells;
 	}
 
@@ -236,11 +236,21 @@ cell *deep_copy_to_tmp(query *q, cell *p1, pl_idx_t p1_ctx, bool nonlocals_only,
 	if (!init_tmp_heap(q))
 		return NULL;
 
+	cell *save_p1 = p1;
 	frame *f = GET_CURR_FRAME();
 	q->st.m->pl->varno = f->nbr_vars;
 	q->st.m->pl->tab_idx = 0;
 	q->cycle_error = false;
 	int nbr_vars = f->nbr_vars;
+
+	if (is_variable(p1)) {
+		const frame *f = GET_FRAME(p1_ctx);
+		const slot *e = GET_SLOT(f, p1->var_nbr);
+		const pl_idx_t slot_nbr = e - q->slots;
+		q->st.m->pl->tab1[q->st.m->pl->tab_idx] = slot_nbr;
+		q->st.m->pl->tab2[q->st.m->pl->tab_idx] = q->st.m->pl->varno++;
+		q->st.m->pl->tab_idx++;
+	}
 
 	if (is_variable(p1)) {
 		p1 = deref(q, p1, p1_ctx);
@@ -262,6 +272,13 @@ cell *deep_copy_to_tmp(query *q, cell *p1, pl_idx_t p1_ctx, bool nonlocals_only,
 		}
 	}
 
+	if (is_variable(save_p1)) {
+		cell tmp;
+		tmp = *save_p1;
+		tmp.var_nbr = q->st.m->pl->tab2[0];
+		unify(q, &tmp, q->st.curr_frame, rec, q->st.curr_frame);
+	}
+
 	if (!copy_attrs)
 		return q->tmp_heap;
 
@@ -276,6 +293,16 @@ cell *deep_copy_to_tmp(query *q, cell *p1, pl_idx_t p1_ctx, bool nonlocals_only,
 	}
 
 	return q->tmp_heap;
+}
+
+cell *deep_copy_to_heap(query *q, cell *p1, pl_idx_t p1_ctx, bool nonlocals_only, bool copy_attrs)
+{
+	cell *tmp = deep_copy_to_tmp(q, p1, p1_ctx, nonlocals_only, copy_attrs);
+	if (!tmp || (tmp == ERR_CYCLE_CELL)) return tmp;
+	cell *tmp2 = alloc_on_heap(q, tmp->nbr_cells);
+	if (!tmp2) return NULL;
+	safe_copy_cells(tmp2, tmp, tmp->nbr_cells);
+	return tmp2;
 }
 
 static cell *deep_raw_copy2_to_tmp(query *q, cell *p1, pl_idx_t p1_ctx, unsigned depth)
@@ -371,16 +398,6 @@ cell *deep_raw_copy_to_tmp(query *q, cell *p1, pl_idx_t p1_ctx)
 	cell *rec = deep_raw_copy2_to_tmp(q, p1, p1_ctx, 0);
 	if (!rec || (rec == ERR_CYCLE_CELL)) return rec;
 	return q->tmp_heap;
-}
-
-cell *deep_copy_to_heap(query *q, cell *p1, pl_idx_t p1_ctx, bool nonlocals_only, bool copy_attrs)
-{
-	cell *tmp = deep_copy_to_tmp(q, p1, p1_ctx, nonlocals_only, copy_attrs);
-	if (!tmp || (tmp == ERR_CYCLE_CELL)) return tmp;
-	cell *tmp2 = alloc_on_heap(q, tmp->nbr_cells);
-	if (!tmp2) return NULL;
-	safe_copy_cells(tmp2, tmp, tmp->nbr_cells);
-	return tmp2;
 }
 
 cell *deep_clone2_to_tmp(query *q, cell *p1, pl_idx_t p1_ctx, unsigned depth)
