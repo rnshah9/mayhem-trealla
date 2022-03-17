@@ -617,16 +617,30 @@ static const char *get_slot_name(query *q, pl_idx_t slot_idx)
 			while (q->ignore[i+offset])
 				offset++;
 
-			q->ignore[i+offset] = true;
 			return varformat(i+offset);
 		}
 	}
 
 	unsigned i = q->pl->tab_idx++;
 	q->pl->tab1[i] = slot_idx;
-	const char *s = varformat(i);
-	//fprintf(stderr, "%u => %u => %s\n", slot_idx, i, s);
-	return s;
+	return varformat(i);
+}
+
+ssize_t print_variable(query *q, char *dst, size_t dstlen, cell *c, pl_idx_t c_ctx, bool running)
+{
+	char *save_dst = dst;
+	frame *f = GET_FRAME(c_ctx);
+	slot *e = GET_SLOT(f, c->var_nbr);
+	pl_idx_t slot_idx = e - q->slots;
+
+	if (q->is_dump_vars) {
+		dst += snprintf(dst, dstlen, "_%s", get_slot_name(q, slot_idx));
+	} else if (!running) {
+		dst += snprintf(dst, dstlen, "%s", GET_STR(q, c));
+	} else
+		dst += snprintf(dst, dstlen, "_%u", (unsigned)slot_idx);
+
+	return dst - save_dst;
 }
 
 ssize_t print_term_to_buf(query *q, char *dst, size_t dstlen, cell *c, pl_idx_t c_ctx, int running, bool cons, unsigned depth)
@@ -766,7 +780,7 @@ ssize_t print_term_to_buf(query *q, char *dst, size_t dstlen, cell *c, pl_idx_t 
 
 		if (q->max_depth && (depth >= q->max_depth)) {
 			dst--;
-			dst += snprintf(dst, dstlen, "%s", ",...]");
+			dst += snprintf(dst, dstlen, "%s", "...]");
 			return dst - save_dst;
 		}
 
@@ -904,23 +918,7 @@ ssize_t print_term_to_buf(query *q, char *dst, size_t dstlen, cell *c, pl_idx_t 
 		dst += snprintf(dst, dstlen, "%s", !braces&&quote?dq?"\"":"'":"");
 
 		if (is_variable(c)) {
-			frame *f = GET_FRAME(c_ctx);
-			slot *e = GET_SLOT(f, c->var_nbr);
-			pl_idx_t slot_idx = e - q->slots;
-
-			if (q->is_dump_vars) {
-				const char *name = get_slot_name(q, slot_idx);
-				dst += snprintf(dst, dstlen, "_%s", name);
-			} else if (!running) {
-				dst += snprintf(dst, dstlen, "%s", GET_STR(q, c));
-			} else
-				dst += snprintf(dst, dstlen, "_%u", (unsigned)slot_idx);
-
-			return dst - save_dst;
-		}
-
-		if (is_variable(c)) {
-			dst += snprintf(dst, dstlen, "_%u", c->var_nbr);
+			dst += print_variable(q, dst, dstlen, c, c_ctx, running);
 			return dst - save_dst;
 		}
 
@@ -947,10 +945,18 @@ ssize_t print_term_to_buf(query *q, char *dst, size_t dstlen, cell *c, pl_idx_t 
 		if (is_structure(c) && !is_string(c)) {
 			pl_idx_t arity = c->arity;
 			dst += snprintf(dst, dstlen, "%s", braces?"{":"(");
+			cell *save_c = c;
+			pl_idx_t save_ctx = c_ctx;
 
 			for (c++; arity--; c += c->nbr_cells) {
 				cell *tmp = running ? deref(q, c, c_ctx) : c;
 				pl_idx_t tmp_ctx = q->latest_ctx;
+
+				if ((tmp == save_c) && (tmp_ctx == save_ctx)) {
+					dst += print_variable(q, dst, dstlen, c, c_ctx, running);
+					return dst - save_dst;
+				}
+
 				int parens = 0;
 
 				if (!braces && is_literal(tmp)) {
@@ -1118,12 +1124,20 @@ ssize_t print_term_to_buf(query *q, char *dst, size_t dstlen, cell *c, pl_idx_t 
 
 char *print_canonical_to_strbuf(query *q, cell *c, pl_idx_t c_ctx, int running)
 {
-	ssize_t len = print_canonical_to_buf(q, NULL, 0, c, c_ctx, running, false, 0);
+	pl_int_t skip = 0, max = 1000000000;
+	pl_idx_t tmp_ctx = c_ctx;
+	cell tmp = {0};
 
-	if (len < 0) {
+	if (running && is_iso_list(c)) {
+		cell *t = skip_max_list(q, c, &tmp_ctx, max, &skip, &tmp);
+
+		if (t && !is_variable(t) && !skip)
+			running = 0;
+	} else if (running && is_cyclic_term(q, c, c_ctx)) {
 		running = 0;
-		len = print_canonical_to_buf(q, NULL, 0, c, c_ctx, running, false, 1);
 	}
+
+	ssize_t len = print_canonical_to_buf(q, NULL, 0, c, c_ctx, running, false, 1);
 
 	char *buf = malloc(len+10);
 	ensure(buf);
@@ -1133,12 +1147,20 @@ char *print_canonical_to_strbuf(query *q, cell *c, pl_idx_t c_ctx, int running)
 
 pl_status print_canonical_to_stream(query *q, stream *str, cell *c, pl_idx_t c_ctx, int running)
 {
-	ssize_t len = print_canonical_to_buf(q, NULL, 0, c, c_ctx, running, false, 0);
+	pl_int_t skip = 0, max = 1000000000;
+	pl_idx_t tmp_ctx = c_ctx;
+	cell tmp = {0};
 
-	if (len < 0) {
+	if (running && is_iso_list(c)) {
+		cell *t = skip_max_list(q, c, &tmp_ctx, max, &skip, &tmp);
+
+		if (t && !is_variable(t) && !skip)
+			running = 0;
+	} else if (running && is_cyclic_term(q, c, c_ctx)) {
 		running = 0;
-		len = print_canonical_to_buf(q, NULL, 0, c, c_ctx, running, false, 1);
 	}
+
+	ssize_t len = print_canonical_to_buf(q, NULL, 0, c, c_ctx, running, false, 1);
 
 	char *dst = malloc(len*2+1); //cehteh: why *2?
 	may_ptr_error(dst);
@@ -1169,14 +1191,21 @@ pl_status print_canonical_to_stream(query *q, stream *str, cell *c, pl_idx_t c_c
 
 pl_status print_canonical(query *q, FILE *fp, cell *c, pl_idx_t c_ctx, int running)
 {
-	ssize_t len = 0;
+	pl_int_t skip = 0, max = 1000000000;
+	pl_idx_t tmp_ctx = c_ctx;
+	cell tmp = {0};
 
-	if (!running || is_cyclic_term(q, c, c_ctx)) {
-		len = print_canonical_to_buf(q, NULL, 0, c, c_ctx, running=0, false, 1);
-	} else {
-		len = print_canonical_to_buf(q, NULL, 0, c, c_ctx, running, false, 0);
-		q->did_quote = false;
+	if (running && is_iso_list(c)) {
+		cell *t = skip_max_list(q, c, &tmp_ctx, max, &skip, &tmp);
+
+		if (t && !is_variable(t) && !skip)
+			running = 0;
+	} else if (running && is_cyclic_term(q, c, c_ctx)) {
+		running = 0;
 	}
+
+	ssize_t len = print_canonical_to_buf(q, NULL, 0, c, c_ctx, running, false, 0);
+	q->did_quote = false;
 
 	char *dst = malloc(len*2+1); //cehteh: why *2?
 	may_ptr_error(dst);
@@ -1207,14 +1236,21 @@ pl_status print_canonical(query *q, FILE *fp, cell *c, pl_idx_t c_ctx, int runni
 
 char *print_term_to_strbuf(query *q, cell *c, pl_idx_t c_ctx, int running)
 {
-	ssize_t len = 0;
+	pl_int_t skip = 0, max = 1000000000;
+	pl_idx_t tmp_ctx = c_ctx;
+	cell tmp = {0};
 
-	if (!running || is_cyclic_term(q, c, c_ctx)) {
-		len = print_term_to_buf(q, NULL, 0, c, c_ctx, running=0, false, 1);
-	} else {
-		len = print_term_to_buf(q, NULL, 0, c, c_ctx, running, false, 0);
-		q->did_quote = false;
+	if (running && is_iso_list(c)) {
+		cell *t = skip_max_list(q, c, &tmp_ctx, max, &skip, &tmp);
+
+		if (t && !is_variable(t) && !skip)
+			running = 0;
+	} else if (running && is_cyclic_term(q, c, c_ctx)) {
+		running = 0;
 	}
+
+	ssize_t len = print_term_to_buf(q, NULL, 0, c, c_ctx, running, false, 0);
+	q->did_quote = false;
 
 	char *buf = malloc(len+10);
 	ensure(buf);
@@ -1224,14 +1260,21 @@ char *print_term_to_strbuf(query *q, cell *c, pl_idx_t c_ctx, int running)
 
 pl_status print_term_to_stream(query *q, stream *str, cell *c, pl_idx_t c_ctx, int running)
 {
-	ssize_t len = 0;
+	pl_int_t skip = 0, max = 1000000000;
+	pl_idx_t tmp_ctx = c_ctx;
+	cell tmp = {0};
 
-	if (!running || is_cyclic_term(q, c, c_ctx)) {
-		len = print_term_to_buf(q, NULL, 0, c, c_ctx, running=0, false, 1);
-	} else {
-		len = print_term_to_buf(q, NULL, 0, c, c_ctx, running, false, 0);
-		q->did_quote = false;
+	if (running && is_iso_list(c)) {
+		cell *t = skip_max_list(q, c, &tmp_ctx, max, &skip, &tmp);
+
+		if (t && !is_variable(t) && !skip)
+			running = 0;
+	} else if (running && is_cyclic_term(q, c, c_ctx)) {
+		running = 0;
 	}
+
+	ssize_t len = print_term_to_buf(q, NULL, 0, c, c_ctx, running, false, 0);
+	q->did_quote = false;
 
 	char *dst = malloc(len+10);
 	may_ptr_error(dst);
@@ -1257,14 +1300,21 @@ pl_status print_term_to_stream(query *q, stream *str, cell *c, pl_idx_t c_ctx, i
 
 pl_status print_term(query *q, FILE *fp, cell *c, pl_idx_t c_ctx, int running)
 {
-	ssize_t len = 0;
+	pl_int_t skip = 0, max = 1000000000;
+	pl_idx_t tmp_ctx = c_ctx;
+	cell tmp = {0};
 
-	if (!running || is_cyclic_term(q, c, c_ctx)) {
-		len = print_term_to_buf(q, NULL, 0, c, c_ctx, running=0, false, 1);
-	} else {
-		len = print_term_to_buf(q, NULL, 0, c, c_ctx, running, false, 0);
-		q->did_quote = false;
+	if (running && is_iso_list(c)) {
+		cell *t = skip_max_list(q, c, &tmp_ctx, max, &skip, &tmp);
+
+		if (t && !is_variable(t) && !skip)
+			running = 0;
+	} else if (running && is_cyclic_term(q, c, c_ctx)) {
+		running = 0;
 	}
+
+	ssize_t len = print_term_to_buf(q, NULL, 0, c, c_ctx, running, false, 0);
+	q->did_quote = false;
 
 	char *dst = malloc(len+10);
 	may_ptr_error(dst);
