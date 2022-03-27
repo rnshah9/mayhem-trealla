@@ -1409,8 +1409,32 @@ static int varunformat(const char *s)
 	return (int)j;
 }
 
+static bool any_attributed(const query *q)
+{
+	const parser *p = q->p;
+	const frame *f = GET_FIRST_FRAME();
+	bool any = false;
+
+	for (unsigned i = 0; i < p->nbr_vars; i++) {
+		if (!strcmp(p->vartab.var_name[i], "_"))
+			continue;
+
+		const slot *e = GET_SLOT(f, i);
+
+		if (!is_empty(&e->c) || !e->c.attrs)
+			continue;
+
+		any = true;
+	}
+
+	return any;
+}
+
 static void dump_vars(query *q, bool partial)
 {
+	if (q->in_attvar_print)
+		return;
+
 	parser *p = q->p;
 	frame *f = GET_FIRST_FRAME();
 	q->is_dump_vars = true;
@@ -1525,9 +1549,28 @@ static void dump_vars(query *q, bool partial)
 		any = true;
 	}
 
+	if (any && any_attributed(q))
+		fprintf(stdout, ",\n");
+
+	// Print residual goals of attributed variables...
+
+	if (any_attributed(q) && !q->in_attvar_print) {
+		q->variable_names = vlist;
+		q->variable_names_ctx = INITIAL_FRAME;
+		cell p1;
+		make_literal(&p1, index_from_pool(q->pl, "dump_attvars"));
+		cell *tmp = clone_to_heap(q, false, &p1, 1);
+		pl_idx_t nbr_cells = 0 + p1.nbr_cells;
+		make_end(tmp+nbr_cells);
+		q->st.curr_cell = tmp;
+		q->in_attvar_print = true;
+		start(q);
+		q->in_attvar_print = false;
+		any = true;
+	}
+
 	g_tpl_interrupt = false;
 	q->is_dump_vars = false;
-	clear_write_options(q);
 
 	if (any && !partial) {
 		if (space) fprintf(stdout, " ");
@@ -1536,6 +1579,7 @@ static void dump_vars(query *q, bool partial)
 	}
 
 	q->pl->did_dump_vars = any;
+	clear_write_options(q);
 	clear_results();
 }
 
@@ -1711,8 +1755,8 @@ static pl_status consultall(query *q, cell *l, pl_idx_t l_ctx)
 			char *s = DUP_SLICE(q, h);
 
 			if (!load_file(q->p->m, s, false)) {
-				free(s);
 				pl_status ok = throw_error(q, h, q->st.curr_frame, "existence_error", "source_sink");
+				free(s);
 				return ok;
 			}
 

@@ -101,7 +101,10 @@ USE_RESULT pl_status fn_iso_call_n(query *q)
 	if (q->retry)
 		return pl_failure;
 
-	GET_FIRST_ARG(xp1,callable);
+	// This copy is because we are building the call structure
+	// and we need variables to be in the local context. One day vars
+	// will be able to hold their own context... free the vars!
+
 	cell *p0 = deep_copy_to_heap(q, q->st.curr_cell, q->st.curr_frame, false, false);
 	may_ptr_error(p0);
 
@@ -327,54 +330,6 @@ USE_RESULT pl_status fn_iso_negation_1(query *q)
 	return pl_success;
 }
 
-USE_RESULT pl_status fn_iso_once_1(query *q)
-{
-	if (q->retry)
-		return pl_failure;
-
-	GET_FIRST_ARG(xp1,callable);
-	cell *p0 = deep_copy_to_heap(q, q->st.curr_cell, q->st.curr_frame, false, false);
-	may_ptr_error(p0);
-
-	if (p0 == ERR_CYCLE_CELL)
-		return throw_error(q, q->st.curr_cell, q->st.curr_frame, "resource_error", "cyclic_term");
-
-	unify(q, q->st.curr_cell, q->st.curr_frame, p0, q->st.curr_frame);
-
-	GET_FIRST_RAW_ARG0(p1,callable,p0);
-	cell *tmp = clone_to_heap(q, true, p1, 2);
-	pl_idx_t nbr_cells = 1 + p1->nbr_cells;
-	make_structure(tmp+nbr_cells++, g_cut_s, fn_sys_inner_cut_0, 0, 0);
-	make_return(q, tmp+nbr_cells);
-	may_error(push_barrier(q));
-	q->st.curr_cell = tmp;
-	return pl_success;
-}
-
-USE_RESULT pl_status fn_ignore_1(query *q)
-{
-	if (q->retry)
-		return pl_success;
-
-	GET_FIRST_ARG(xp1,callable);
-	cell *p0 = deep_copy_to_heap(q, q->st.curr_cell, q->st.curr_frame, false, false);
-	may_ptr_error(p0);
-
-	if (!p0 || (p0 == ERR_CYCLE_CELL))
-		return throw_error(q, q->st.curr_cell, q->st.curr_frame, "resource_error", "stack");
-
-	unify(q, q->st.curr_cell, q->st.curr_frame, p0, q->st.curr_frame);
-
-	GET_FIRST_RAW_ARG0(p1,callable,p0);
-	cell *tmp = clone_to_heap(q, true, p1, 2);
-	pl_idx_t nbr_cells = 1 + p1->nbr_cells;
-	make_structure(tmp+nbr_cells++, g_cut_s, fn_sys_inner_cut_0, 0, 0);
-	make_return(q, tmp+nbr_cells);
-	may_error(push_barrier(q));
-	q->st.curr_cell = tmp;
-	return pl_success;
-}
-
 USE_RESULT pl_status fn_iso_cut_0(query *q)
 {
 	cut_me(q, false, false);
@@ -420,19 +375,7 @@ USE_RESULT pl_status fn_sys_block_catcher_1(query *q)
 
 USE_RESULT pl_status fn_iso_catch_3(query *q)
 {
-	GET_FIRST_ARG(xp1,any);
-	GET_NEXT_ARG(xp2,any);
-	GET_NEXT_ARG(xp3,callable);
-
-	cell *p0 = deep_copy_to_heap(q, q->st.curr_cell, q->st.curr_frame, false, false);
-	may_ptr_error(p0);
-
-	if (p0 == ERR_CYCLE_CELL)
-		return throw_error(q, q->st.curr_cell, q->st.curr_frame, "resource_error", "cyclic_term");
-
-	unify(q, q->st.curr_cell, q->st.curr_frame, p0, q->st.curr_frame);
-
-	GET_FIRST_RAW_ARG0(p1,any,p0);
+	GET_FIRST_ARG(p1,any);
 	GET_NEXT_ARG(p2,any);
 
 	if (q->retry && q->exception) {
@@ -475,15 +418,7 @@ USE_RESULT pl_status fn_iso_catch_3(query *q)
 
 USE_RESULT pl_status fn_sys_call_cleanup_3(query *q)
 {
-	cell *p0 = deep_copy_to_heap(q, q->st.curr_cell, q->st.curr_frame, false, false);
-	may_ptr_error(p0);
-
-	if (p0 == ERR_CYCLE_CELL)
-		return throw_error(q, q->st.curr_cell, q->st.curr_frame, "resource_error", "cyclic_term");
-
-	unify(q, q->st.curr_cell, q->st.curr_frame, p0, q->st.curr_frame);
-
-	GET_FIRST_RAW_ARG0(p1,any,p0);
+	GET_FIRST_ARG(p1,any);
 	GET_NEXT_ARG(p2,any);
 
 	if (q->retry && q->exception) {

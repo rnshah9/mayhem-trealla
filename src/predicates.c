@@ -4606,16 +4606,6 @@ static USE_RESULT pl_status fn_iso_univ_2(query *q)
 	if (is_iso_list(p2) && !check_list(q, p2, p2_ctx, &is_partial, NULL) && !is_partial)
 		return throw_error(q, p2, p2_ctx, "type_error", "list");
 
-#if 0
-	LIST_HANDLER(p2);
-	LIST_HEAD(p2);
-	cell *t = LIST_TAIL(p2);
-	pl_idx_t t_ctx = p2_ctx;
-
-	if (is_variable(t) && (p2->var_nbr == t->var_nbr) && (p2_ctx == t_ctx))
-		return throw_error(q, p2, p2_ctx, "type_error", "list");
-#endif
-
 	if (is_string(p1)) {
 		cell tmp;
 		make_literal(&tmp, g_dot_s);
@@ -4631,18 +4621,11 @@ static USE_RESULT pl_status fn_iso_univ_2(query *q)
 	}
 
 	if (is_variable(p2)) {
-		cell *tmp = deep_copy_to_heap(q, p1, p1_ctx, false, false);
-		may_ptr_error(tmp);
-		if (tmp == ERR_CYCLE_CELL)
-			return throw_error(q, p1, p1_ctx, "resource_error", "cyclic_term");
-
-		unify(q, p1, p1_ctx, tmp, q->st.curr_frame);
-		cell tmp2 = *tmp;
+		cell tmp2 = *p1;
 		tmp2.nbr_cells = 1;
 		tmp2.arity = 0;
 		CLR_OP(&tmp2);
 		allocate_list(q, &tmp2);
-		p1 = tmp;
 		unsigned arity = p1->arity;
 		p1++;
 
@@ -4653,7 +4636,7 @@ static USE_RESULT pl_status fn_iso_univ_2(query *q)
 
 		cell *l = end_list(q);
 		may_ptr_error(l);
-		return unify(q, p2, p2_ctx, l, q->st.curr_frame);
+		return unify(q, p2, p2_ctx, l, p1_ctx);
 	}
 
 	if (is_variable(p1)) {
@@ -4855,8 +4838,13 @@ static USE_RESULT pl_status fn_iso_copy_term_2(query *q)
 		slot *e1 = GET_SLOT(f1, p1->var_nbr);
 		frame *f2 = GET_FRAME(p2_ctx);
 		slot *e2 = GET_SLOT(f2, p2->var_nbr);
-		e2->c.attrs = e1->c.attrs;
-		e2->c.attrs_ctx = e1->c.attrs_ctx;
+
+		if (e1->c.attrs) {
+			cell *tmp = deep_copy_to_heap_with_replacement(q, e1->c.attrs, e1->c.attrs_ctx, false, true, p1, p1_ctx, p2, p2_ctx);
+			e2->c.attrs = tmp;
+			e2->c.attrs_ctx = q->st.curr_frame;
+		}
+
 		return pl_success;
 	}
 
@@ -4872,7 +4860,7 @@ static USE_RESULT pl_status fn_iso_copy_term_2(query *q)
 	if (!tmp || (tmp == ERR_CYCLE_CELL))
 		return throw_error(q, p1, p1_ctx, "resource_error", "cyclic_term");
 
-	if (is_variable(p1_raw) && !is_variable(p1) && is_variable(p2)) {
+	if (is_variable(p1_raw) && is_variable(p2)) {
 		cell tmpv;
 		tmpv = *p2;
 		tmpv.var_nbr = q->st.m->pl->tab2[0];
@@ -4899,7 +4887,7 @@ static USE_RESULT pl_status fn_copy_term_nat_2(query *q)
 	if (!tmp || (tmp == ERR_CYCLE_CELL))
 		return throw_error(q, p1, p1_ctx, "resource_error", "cyclic_term");
 
-	if (is_variable(p1_raw) && !is_variable(p1) && is_variable(p2)) {
+	if (is_variable(p1_raw) && is_variable(p2)) {
 		cell tmpv;
 		tmpv = *p2;
 		tmpv.var_nbr = q->st.m->pl->tab2[0];
@@ -6227,13 +6215,18 @@ static USE_RESULT pl_status fn_iso_findall_3(query *q)
 	if (is_iso_list(xp3) && !check_list(q, xp3, xp3_ctx, &is_partial, NULL) && !is_partial)
 		return throw_error(q, xp3, xp3_ctx, "type_error", "list");
 
+	// This copy is because we are putting found items in the queue area
+	// and we need variables to be in the local context. One day vars
+	// will be able to hold their own context... free the vars!
+
 	cell *p0 = deep_copy_to_heap(q, q->st.curr_cell, q->st.curr_frame, false, true);
-	GET_FIRST_ARG0(p1,any,p0);
-	GET_NEXT_ARG(p2,callable);
-	GET_NEXT_ARG(p3,list_or_nil_or_var);
 
 	if (p0 == ERR_CYCLE_CELL)
 		return throw_error(q, q->st.curr_cell, q->st.curr_frame, "resource_error", "cyclic_term");
+
+	GET_FIRST_ARG0(p1,any,p0);
+	GET_NEXT_ARG(p2,callable);
+	GET_NEXT_ARG(p3,list_or_nil_or_var);
 
 	if (!q->retry) {
 		q->st.qnbr++;
@@ -11039,6 +11032,45 @@ static USE_RESULT pl_status fn_sys_unifiable_3(query *q)
 	return unify(q, p3, p3_ctx, l, q->st.curr_frame);
 }
 
+static USE_RESULT pl_status fn_sys_list_attributed_1(query *q)
+{
+	GET_FIRST_ARG(p1,variable);
+	parser *p = q->p;
+	frame *f = GET_FIRST_FRAME();
+	bool first = true;
+
+	for (unsigned i = 0; i < p->nbr_vars; i++) {
+		if (!strcmp(p->vartab.var_name[i], "_"))
+			continue;
+
+		slot *e = GET_SLOT(f, i);
+
+		if (!is_empty(&e->c))
+			continue;
+
+		if (!e->c.attrs)
+			continue;
+
+		cell v;
+		make_variable(&v, index_from_pool(q->pl, p->vartab.var_name[i]), i);
+
+		if (first) {
+			allocate_list(q, &v);
+			first = false;
+		} else
+			append_list(q, &v);
+	}
+
+	if (first) {
+		cell tmp;
+		make_literal(&tmp, g_nil_s);
+		return unify(q, p1, p1_ctx, &tmp, q->st.curr_frame);
+	}
+
+	cell *l = end_list(q);
+	return unify(q, p1, p1_ctx, l, INITIAL_FRAME);
+}
+
 static USE_RESULT pl_status fn_sys_erase_attributes_1(query *q)
 {
 	GET_FIRST_ARG(p1,variable);
@@ -12006,8 +12038,6 @@ static const struct builtins g_predicates_other[] =
 	{"unifiable", 3, fn_sys_unifiable_3, NULL, false},
 	{"$incr", 2, fn_sys_incr_2, "?var", false},
 	{"$choice", 0, fn_sys_choice_0, NULL, false},
-	{"once", 1, fn_iso_once_1, "+callable", false},
-	{"ignore", 1, fn_ignore_1, "+callable", false},
 
 	{"kv_set", 3, fn_kv_set_3, "+atomic,+value,+list", false},
 	{"kv_get", 3, fn_kv_get_3, "+atomic,-value,+list", false},
@@ -12016,6 +12046,7 @@ static const struct builtins g_predicates_other[] =
 	{"$write_attributes", 2, fn_sys_write_attributes_2, "+variable,+list", false},
 	{"$read_attributes", 2, fn_sys_read_attributes_2, "+variable,-list", false},
 	{"$erase_attributes", 1, fn_sys_erase_attributes_1, "+variable", false},
+	{"$list_attributed", 1, fn_sys_list_attributed_1, "-list", false},
 
 	{"$dump_keys", 1, fn_sys_dump_keys_1, "+pi", false},
 
