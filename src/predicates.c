@@ -2496,32 +2496,6 @@ static USE_RESULT pl_status fn_copy_term_nat_2(query *q)
 	return unify(q, p2, p2_ctx, tmp, q->st.curr_frame);
 }
 
-static USE_RESULT pl_status fn_sys_strip_attributes_1(query *q)
-{
-	GET_FIRST_ARG(p1,any);
-	LIST_HANDLER(p1);
-
-	if (!is_variable(p1) && !is_iso_list(p1))
-		return pl_success;
-
-	while (is_iso_list(p1)) {
-		cell *c = LIST_HEAD(p1);
-		c = deref(q, c, p1_ctx);
-
-		if (is_variable(c)) {
-			frame *f = GET_FRAME(q->latest_ctx);
-			slot *e = GET_SLOT(f, c->var_nbr);
-			e->c.attrs = NULL;
-		}
-
-		p1 = LIST_TAIL(p1);
-		p1 = deref(q, p1, p1_ctx);
-		p1_ctx = q->latest_ctx;
-	}
-
-	return pl_success;
-}
-
 static USE_RESULT pl_status fn_iso_clause_2(query *q)
 {
 	GET_FIRST_ARG(p1,callable);
@@ -4648,8 +4622,7 @@ static USE_RESULT pl_status fn_between_3(query *q)
 		if (get_int(p1) != get_int(p2))
 			may_error(push_choice(q));
 
-		set_var(q, p3, p3_ctx, p1, q->st.curr_frame);
-		return pl_success;
+		return unify(q, p3, p3_ctx, p1, q->st.curr_frame);
 	}
 
 	pl_int_t val = get_int(p4) + 1;
@@ -4661,8 +4634,7 @@ static USE_RESULT pl_status fn_between_3(query *q)
 	if (val != get_int(p2))
 		may_error(push_choice(q));
 
-	set_var(q, p3, p3_ctx, &tmp, q->st.curr_frame);
-	return pl_success;
+	return unify(q, p3, p3_ctx, &tmp, q->st.curr_frame);
 }
 
 #if 0
@@ -7310,7 +7282,6 @@ static const struct builtins g_other_bifs[] =
 	{"$register_cleanup", 1, fn_sys_register_cleanup_1, NULL, false},
 	{"$register_term", 1, fn_sys_register_term_1, NULL, false},
 	{"$get_level", 1, fn_sys_get_level_1, "-var", false},
-	{"$strip_attributes", 1, fn_sys_strip_attributes_1, "+vars", false},
 	{"$is_partial_string", 1, fn_sys_is_partial_string_1, "+string", false},
 	{"$undo_trail", 1, fn_sys_undo_trail_1, NULL, false},
 	{"$redo_trail", 0, fn_sys_redo_trail_0, NULL, false},
