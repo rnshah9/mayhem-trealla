@@ -592,12 +592,35 @@ ssize_t print_canonical_to_buf(query *q, char *dst, size_t dstlen, cell *c, pl_i
 	return dst - save_dst;
 }
 
-static const char *varformat(unsigned nbr)
+static const char *varformat2(cell *c, unsigned nv_start)
+{
+	mpz_t tmp;
+
+	if (is_smallint(c))
+		mp_int_init_value(&tmp, c->val_int);
+	else
+		mp_int_init_copy(&tmp, &c->val_bigint->ival);
+
+	mp_small nbr;
+	mp_int_mod_value(&tmp, 26, &nbr);
+	static char tmpbuf[8192];
+	char *dst = tmpbuf;
+	dst += sprintf(dst, "%c", 'A'+(unsigned)(nbr));
+	mp_int_div_value(&tmp, 26, &tmp, NULL);
+
+	if (mp_int_compare_zero(&tmp) > 0)
+		dst += mp_int_to_string(&tmp, 10, dst, sizeof(tmpbuf));
+
+	mp_int_clear(&tmp);
+	return tmpbuf;
+}
+
+static const char *varformat(unsigned long long nbr)
 {
 	static char tmpbuf[80];
 	char *dst = tmpbuf;
-	dst += sprintf(dst, "%c", 'A'+nbr%26);
-	if ((nbr/26) > 0) dst += sprintf(dst, "%u", (nbr/26));
+	dst += sprintf(dst, "%c", 'A'+(unsigned)(nbr%26));
+	if ((nbr/26) > 0) dst += sprintf(dst, "%llu", (nbr/26));
 	return tmpbuf;
 }
 
@@ -884,11 +907,11 @@ ssize_t print_term_to_buf(query *q, char *dst, size_t dstlen, cell *c, pl_idx_t 
 		if (is_string(c)) dq = quote = 1;
 		if (q->quoted < 0) quote = 0;
 		if ((c->arity == 1) && is_literal(c) && !strcmp(src, "{}")) braces = 1;
+		cell *c1 = deref(q, c+1, c_ctx);
 
 		if (running && is_literal(c) && !strcmp(src, "$VAR")
-			&& q->numbervars && (!q->is_dump_vars || depth) && is_integer(deref(q, c+1, c_ctx))) {
-			unsigned var_nbr = get_smallint(deref(q, c+1, c_ctx)) - q->nv_start;
-			dst += snprintf(dst, dstlen, "%s", varformat(var_nbr));
+			&& q->numbervars && (!q->is_dump_vars || depth) && is_integer(c1)) {
+			dst += snprintf(dst, dstlen, "%s", varformat2(c1, q->nv_start));
 			return dst - save_dst;
 		}
 

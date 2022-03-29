@@ -536,9 +536,20 @@ LOOP:
 static frame *push_frame(query *q, unsigned nbr_vars)
 {
 	pl_idx_t new_frame = q->st.fp++;
+	const frame *curr_f = GET_CURR_FRAME();
 	frame *f = GET_FRAME(new_frame);
-	f->prev_frame = q->st.curr_frame;
-	f->prev_cell = q->st.curr_cell;
+	const cell *next_cell = q->st.curr_cell + q->st.curr_cell->nbr_cells;
+
+	// Avoid long chains of useless returns...
+
+	if (is_end(next_cell) && !next_cell->val_ret && curr_f->prev_cell) {
+		f->prev_frame = curr_f->prev_frame;
+		f->prev_cell = curr_f->prev_cell;
+	} else {
+		f->prev_frame = q->st.curr_frame;
+		f->prev_cell = q->st.curr_cell;
+	}
+
 	f->cgen = ++q->cgen;
 	f->is_complex = false;
 	f->is_last = false;
@@ -902,15 +913,16 @@ static void proceed(query *q)
 	q->st.curr_cell += q->st.curr_cell->nbr_cells;
 	frame *f = GET_CURR_FRAME();
 
-	while (q->st.curr_cell && is_end(q->st.curr_cell)) {
+	while (is_end(q->st.curr_cell)) {
 		if (q->st.curr_cell->val_ret) {
 			f->cgen = q->st.curr_cell->cgen;	// set the cgen back
+
+			if (q->st.curr_cell->mod_id != q->st.m->id)
+				q->st.m = find_module_id(q->pl, q->st.curr_cell->mod_id);
 		}
 
-		if (q->st.curr_cell->mod_id != q->st.m->id)
-			q->st.m = find_module_id(q->pl, q->st.curr_cell->mod_id);
-
-		q->st.curr_cell = q->st.curr_cell->val_ret;
+		if (!(q->st.curr_cell = q->st.curr_cell->val_ret))
+			break;
 	}
 }
 
