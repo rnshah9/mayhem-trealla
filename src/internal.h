@@ -346,8 +346,8 @@ struct cell_ {
 				uint16_t priority;		// used in parsing operators
 
 				struct {
-					cell *tmp_attrs;	// used with TAG_VAR
-					pl_idx_t tmp_ctx;	// used with TAG_VAR
+					cell *tmp_attrs;	// used with TAG_VAR in copy_term
+					pl_idx_t tmp_ctx;	// used with TAG_VAR in copy_term
 				};
 			};
 
@@ -438,6 +438,8 @@ struct trail_ {
 struct slot_ {
 	cell c;
 	pl_idx_t ctx;
+	bool sweep:1;
+	bool mark:1;
 };
 
 struct frame_ {
