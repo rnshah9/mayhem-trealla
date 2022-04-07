@@ -5,43 +5,50 @@
 #include <string.h>
 #include <time.h>
 #include <assert.h>
+#include <unistd.h>
 
-#if !USE_ISOCLINE
+#ifdef USE_ISOCLINE
+#include "isocline/include/isocline.h"
+#else
 #include <readline/readline.h>
 #include <readline/history.h>
-#else
-#include "isocline/include/isocline.h"
+#include <termios.h>
 #endif
+
 
 #include "history.h"
 #include "utf8.h"
-
-#include <termios.h>
-#include <unistd.h>
-
 #include "cdebug.h"
 
 int history_getch(void)
 {
+#ifndef _WIN32
 	struct termios oldattr, newattr;
 	tcgetattr(STDIN_FILENO, &oldattr);
 	newattr = oldattr;
 	newattr.c_lflag &= ~(ICANON | ECHO);
 	tcsetattr(STDIN_FILENO, TCSANOW, &newattr);
+#endif
 	int ch = fgetc_utf8(stdin);
+#ifndef _WIN32
 	tcsetattr(STDIN_FILENO, TCSANOW, &oldattr);
+#endif
 	return ch;
 }
 
 int history_getch_fd(int fd)
 {
+#ifndef _WIN32
 	struct termios oldattr, newattr;
 	tcgetattr(fd, &oldattr);
 	newattr = oldattr;
 	newattr.c_lflag &= ~(ICANON | ECHO);
 	tcsetattr(fd, TCSANOW, &newattr);
+#endif
 	int ch = fgetc_utf8(stdin);
+#ifndef _WIN32
 	tcsetattr(fd, TCSANOW, &oldattr);
+#endif
 	return ch;
 }
 

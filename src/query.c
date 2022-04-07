@@ -14,6 +14,7 @@
 #include "utf8.h"
 
 #ifdef _WIN32
+#include <windows.h>
 #define msleep Sleep
 #else
 static void msleep(int ms)
@@ -1792,6 +1793,7 @@ pl_status start(query *q)
 	bool done = false;
 
 	while (!done && !q->error) {
+#ifndef _WIN32
 		if (g_tpl_interrupt == SIGALRM) {
 			g_tpl_interrupt = 0;
 			pl_status ok = throw_error(q, q->st.curr_cell, q->st.curr_frame, "time_limit_exceeded", "timed_out");
@@ -1801,6 +1803,7 @@ pl_status start(query *q)
 
 			continue;
 		}
+#endif
 
 		if (g_tpl_interrupt) {
 			int ok = check_interrupt(q);
@@ -1950,7 +1953,7 @@ pl_status start(query *q)
 
 static int clock_gettime_monotonic(struct timespec *tv)
 {
-	static LARGE_INTEGER ticksPerSec = 0;
+	static LARGE_INTEGER ticksPerSec = {0};
 	LARGE_INTEGER ticks;
 	double seconds;
 
@@ -1986,7 +1989,7 @@ static int clock_gettime_realtime(struct timespec *tv)
 	return 0;
 }
 
-static int clock_gettime(clockid_t type, struct timespec *tp)
+static int my_clock_gettime(clockid_t type, struct timespec *tp)
 {
 	if (type == CLOCK_MONOTONIC)
 		return clock_gettime_monotonic(tp);
@@ -1996,19 +1999,21 @@ static int clock_gettime(clockid_t type, struct timespec *tp)
     errno = ENOTSUP;
     return -1;
 }
+#else
+#define my_clock_gettime clock_gettime
 #endif
 
 uint64_t cpu_time_in_usec(void)
 {
-	struct timespec now;
-	clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &now);
+	struct timespec now = {0};
+	my_clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &now);
 	return (uint64_t)(now.tv_sec * 1000 * 1000) + (now.tv_nsec / 1000);
 }
 
 uint64_t get_time_in_usec(void)
 {
-	struct timespec now;
-	clock_gettime(CLOCK_REALTIME, &now);
+	struct timespec now = {0};
+	my_clock_gettime(CLOCK_REALTIME, &now);
 	return (uint64_t)(now.tv_sec * 1000 * 1000) + (now.tv_nsec / 1000);
 }
 

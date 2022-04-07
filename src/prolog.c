@@ -13,6 +13,10 @@
 #include "module.h"
 #include "prolog.h"
 
+#ifdef _WIN32
+#define realpath(N,R) _fullpath((R),(N),_MAX_PATH)
+#endif
+
 static const size_t INITIAL_POOL_SIZE = 64000;	// bytes
 
 pl_idx_t g_empty_s, g_pair_s, g_dot_s, g_cut_s, g_nil_s, g_true_s, g_fail_s;
@@ -67,7 +71,7 @@ static pl_idx_t add_to_pool(prolog *pl, const char *name)
 	memcpy(pl->pool + offset, name, len+1);
 	pl->pool_offset += len + 1;
 	const char *key = strdup(name);
-	m_set(pl->symtab, key, (void*)(unsigned long)offset);
+	m_set(pl->symtab, key, (void*)(size_t)offset);
 	g_literal_cnt++;
 	return (pl_idx_t)offset;
 }
@@ -77,7 +81,7 @@ pl_idx_t index_from_pool(prolog *pl, const char *name)
 	const void *val;
 
 	if (m_get(pl->symtab, name, &val))
-		return (pl_idx_t)(unsigned long)val;
+		return (pl_idx_t)(size_t)val;
 
 	return add_to_pool(pl, name);
 }

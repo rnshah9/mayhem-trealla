@@ -3,12 +3,15 @@ GIT_VERSION := "$(shell git describe --abbrev=4 --dirty --always --tags)"
 CFLAGS = -Isrc -I/usr/local/include -DVERSION='$(GIT_VERSION)' -O3 \
 	-Wall -Wextra -D_GNU_SOURCE -Wno-deprecated-declarations \
 	-funsigned-char $(OPT) \
-	-Wno-unused-function -Wno-unused-parameter -Wno-unused-variable
+	-Wno-unused-function -Wno-unused-parameter \
+	-Wno-unused-but-set-variable -Wno-unused-variable
 
-LDFLAGS = -L/usr/local/lib -lreadline -lm
+LDFLAGS = -L/usr/local/lib -lm
 
 ifdef ISOCLINE
 CFLAGS += -DUSE_ISOCLINE=1
+else
+LDFLAGS += -lreadline
 endif
 
 ifndef NOSSL
@@ -75,7 +78,7 @@ test:
 clean:
 	rm -f tpl src/*.o src/imath/*.o src/isocline/src/*.o \
 		library/*.o library/*.c *.o gmon.* \
-		vgcore.* *.core core core.*
+		vgcore.* *.core core core.* *.exe
 	rm -f *.itf *.po samples/*.itf samples/*.po
 
 # from [gcc|clang] -MM src/*.c src/imath/*.c src/isocline/src/isocline.c

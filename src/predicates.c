@@ -24,7 +24,11 @@
 #endif
 
 #ifdef _WIN32
+#include <windows.h>
+#define unsetenv(p1)
+#define setenv(p1,p2,p3)
 #define msleep Sleep
+#define localtime_r(p1,p2) localtime(p1)
 #else
 static void msleep(int ms)
 {
@@ -5232,7 +5236,7 @@ static USE_RESULT pl_status fn_date_time_7(query *q)
 	GET_NEXT_ARG(p5,variable);
 	GET_NEXT_ARG(p6,variable);
 	GET_NEXT_ARG(p7,variable);
-	struct tm tm;
+	struct tm tm = {0};
 	time_t now = time(NULL);
 	localtime_r(&now, &tm);
 	cell tmp;
@@ -5261,7 +5265,7 @@ static USE_RESULT pl_status fn_date_time_6(query *q)
 	GET_NEXT_ARG(p4,variable);
 	GET_NEXT_ARG(p5,variable);
 	GET_NEXT_ARG(p6,variable);
-	struct tm tm;
+	struct tm tm = {0};
 	time_t now = time(NULL);
 	localtime_r(&now, &tm);
 	cell tmp;
@@ -7108,6 +7112,9 @@ static USE_RESULT pl_status fn_sys_register_term_1(query *q)
 
 static USE_RESULT pl_status fn_sys_alarm_1(query *q)
 {
+#ifdef _WIN32
+	return pl_failure;
+#else
 	GET_FIRST_ARG(p1,number);
 	int time0 = 0;
 
@@ -7137,6 +7144,7 @@ static USE_RESULT pl_status fn_sys_alarm_1(query *q)
 	it.it_value.tv_usec = ms * 1000;
 	setitimer(ITIMER_REAL, &it, NULL);
 	return pl_success;
+#endif
 }
 
 static USE_RESULT pl_status fn_sys_register_cleanup_1(query *q)
