@@ -289,7 +289,7 @@ static bool is_cyclic_term_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 		return is_cyclic_list_internal(q, p1, p1_ctx, depth);
 
 	if (depth > MAX_DEPTH)
-		return false;
+		return true;
 
 	pl_idx_t nbr_cells = p1->nbr_cells - 1;
 	unsigned arity = p1->arity;
@@ -303,7 +303,7 @@ static bool is_cyclic_term_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 			pl_idx_t c_ctx = q->latest_ctx;
 
 			if (!is_variable(c) && e->sweep) {
-				e->sweep = false;
+				e->mark = true;
 				return true;
 			}
 
@@ -314,10 +314,7 @@ static bool is_cyclic_term_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 			if (ok)
 				return true;
 		} else {
-			cell *c = deref(q, p1, p1_ctx);
-			pl_idx_t c_ctx = q->latest_ctx;
-
-			if (is_cyclic_term_internal(q, c, c_ctx, depth))
+			if (is_cyclic_term_internal(q, p1, p1_ctx, depth))
 				return true;
 		}
 
