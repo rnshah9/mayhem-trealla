@@ -205,7 +205,6 @@ static bool is_cyclic_list_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 {
 	cell *l = p1;
 	pl_idx_t l_ctx = p1_ctx;
-	bool ret_val = false;
 	LIST_HANDLER(l);
 
 	while (is_iso_list(l) && !g_tpl_interrupt) {
@@ -219,20 +218,13 @@ static bool is_cyclic_list_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 			c_ctx = q->latest_ctx;
 
 			if (!is_variable(c) && e->sweep) {
-				e->mark = true;
-				ret_val = true;
-				break;
+				e->sweep = false;
+				return true;
 			}
-
-			e->sweep = true;
-			ret_val = is_cyclic_term_internal(q, c, c_ctx, depth+1);
-			e->sweep = false;
-
-			if (ret_val)
-				break;
-		} else {
-			ret_val = is_cyclic_term_internal(q, c, c_ctx, depth+1);
 		}
+
+		if (is_cyclic_term_internal(q, c, c_ctx, depth+1))
+			return true;
 
 		l = LIST_TAIL(l);
 
@@ -243,41 +235,16 @@ static bool is_cyclic_list_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 			l_ctx = q->latest_ctx;
 
 			if (!is_variable(l) && e->sweep) {
-				e->mark = true;
-				ret_val = true;
-				break;
-			}
-
-			e->sweep = true;
-		}
-	}
-
-	if (depth)
-		return ret_val;
-
-	l = p1;
-	l_ctx = p1_ctx;
-
-	while (is_iso_list(l) && !g_tpl_interrupt) {
-		l = LIST_TAIL(l);
-
-		if (is_variable(l)) {
-			const frame *f = GET_FRAME(l_ctx);
-			slot *e = GET_SLOT(f, l->var_nbr);
-			l = deref(q, l, l_ctx);
-			l_ctx = q->latest_ctx;
-
-			if (!is_variable(l) && e->mark) {
 				e->sweep = false;
-				e->mark = false;
-				break;
+				return true;
 			}
-
-			e->sweep = false;
 		}
 	}
 
-	return ret_val;
+	if (is_cyclic_term_internal(q, l, l_ctx, depth+1))
+		return true;
+
+	return false;
 }
 
 static bool is_cyclic_term_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigned depth)
@@ -285,17 +252,18 @@ static bool is_cyclic_term_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 	if (!is_structure(p1))
 		return false;
 
-	if (is_iso_list(p1))
-		return is_cyclic_list_internal(q, p1, p1_ctx, depth);
-
 	if (depth > MAX_DEPTH)
 		return true;
+
+	if (is_iso_list(p1))
+		return is_cyclic_list_internal(q, p1, p1_ctx, depth);
 
 	pl_idx_t nbr_cells = p1->nbr_cells - 1;
 	unsigned arity = p1->arity;
 	p1++;
 
 	while (arity-- && !g_tpl_interrupt) {
+
 		if (is_variable(p1)) {
 			frame *f = GET_FRAME(p1_ctx);
 			slot *e = GET_SLOT(f, p1->var_nbr);
@@ -303,18 +271,14 @@ static bool is_cyclic_term_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 			pl_idx_t c_ctx = q->latest_ctx;
 
 			if (!is_variable(c) && e->sweep) {
-				e->mark = true;
+				e->sweep = false;
 				return true;
 			}
 
-			e->sweep = true;
-			bool ok = is_cyclic_term_internal(q, c, c_ctx, depth);
-			e->sweep = false;
-
-			if (ok)
+			if (is_cyclic_term_internal(q, c, c_ctx, depth+1))
 				return true;
 		} else {
-			if (is_cyclic_term_internal(q, p1, p1_ctx, depth))
+			if (is_cyclic_term_internal(q, p1, p1_ctx, depth+1))
 				return true;
 		}
 
@@ -950,9 +914,6 @@ bool unify_internal(query *q, cell *p1, pl_idx_t p1_ctx, cell *p2, pl_idx_t p2_c
 
 	return g_disp[p1->tag].fn(q, p1, p2);
 }
-
-// Unification needs to be redone using the sweep/mark
-// method to avoid prechecks & long cycle-info lists.
 
 bool unify(query *q, cell *p1, pl_idx_t p1_ctx, cell *p2, pl_idx_t p2_ctx)
 {
