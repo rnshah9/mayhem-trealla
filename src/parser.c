@@ -1,12 +1,9 @@
 #include <stdlib.h>
-#include <stdlib.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <ctype.h>
 #include <float.h>
-#include <sys/time.h>
 
 #include "internal.h"
 #include "library.h"
@@ -38,7 +35,7 @@ int slicecmp(const char *s1, size_t len1, const char *s2, size_t len2)
 
 static const char *get_filename(const char *path)
 {
-	const char *ptr = strrchr(path, '/');
+	const char *ptr = strrchr(path, PATH_SEP_CHAR);
 
 	if (!ptr)
 		return path;
@@ -253,11 +250,11 @@ char *relative_to(const char *basefile, const char *relfile)
 		strcpy(tmpbuf, basefile);
 		ptr = tmpbuf + strlen(tmpbuf) - 1;
 
-		while ((ptr != tmpbuf) && (*ptr != '/'))
+		while ((ptr != tmpbuf) && (*ptr != PATH_SEP_CHAR))
 			ptr--;
 
 		if (ptr != tmpbuf)
-			*ptr++ = '/';
+			*ptr++ = PATH_SEP_CHAR;
 
 		*ptr = '\0';
 	}
@@ -646,7 +643,7 @@ static void directives(parser *p, cell *d)
 			query q = (query){0};
 			q.pl = p->pl;
 			q.st.m = p->m;
-			snprintf(dstbuf, sizeof(dstbuf), "%s/", g_tpl_lib);
+			snprintf(dstbuf, sizeof(dstbuf), "%s%c", g_tpl_lib, PATH_SEP_CHAR);
 			char *dst = dstbuf + strlen(dstbuf);
 			pl_idx_t ctx = 0;
 			print_term_to_buf(&q, dst, sizeof(dstbuf)-strlen(g_tpl_lib), p1, ctx, 1, false, 0);
@@ -952,14 +949,43 @@ void term_assign_vars(parser *p, unsigned start, bool rebase)
 	p->nbr_vars = 0;
 	memset(&p->vartab, 0, sizeof(p->vartab));
 	clause *cl = p->cl;
-	cl->nbr_vars = 0;
+	cl->nbr_vars = cl->nbr_temporaries = 0;
 	cl->is_first_cut = false;
 	cl->is_cut_only = false;
+
+	// Any variable that is only used in the head of a
+	// clause is a temporary variables...
+
+	cell *body = get_body(cl->cells);
+	bool in_body = false;
+
+	for (pl_idx_t i = 0; i < cl->cidx; i++) {
+		cell *c = cl->cells + i;
+
+		if (c == body)
+			in_body = true;
+
+		if (!is_variable(c))
+			continue;
+
+		if (c->val_off == g_anon_s)
+			c->flags |= FLAG_VAR_ANON;
+
+		if (!in_body)
+			c->flags |= FLAG_VAR_TEMPORARY;
+		else
+			c->flags &= ~FLAG_VAR_TEMPORARY;
+	}
+
+	// Don't assign temporaries yet...
 
 	for (pl_idx_t i = 0; i < cl->cidx; i++) {
 		cell *c = cl->cells + i;
 
 		if (!is_variable(c))
+			continue;
+
+		if (is_temporary(c))
 			continue;
 
 		if (rebase) {
@@ -986,6 +1012,42 @@ void term_assign_vars(parser *p, unsigned start, bool rebase)
 		}
 	}
 
+	// Do them last...
+
+	for (pl_idx_t i = 0; i < cl->cidx; i++) {
+		cell *c = cl->cells + i;
+
+		if (!is_variable(c))
+			continue;
+
+		if (!is_temporary(c))
+			continue;
+
+		if (rebase) {
+			char tmpbuf[20];
+			snprintf(tmpbuf, sizeof(tmpbuf), "_V%u", c->var_nbr);
+			c->var_nbr = get_varno(p, tmpbuf);
+		} else
+			c->var_nbr = get_varno(p, GET_STR(p, c));
+
+		c->var_nbr += start;
+
+		if (c->var_nbr == MAX_ARITY) {
+			fprintf(stdout, "Error: max vars reached\n");
+			p->error = true;
+			return;
+		}
+
+		p->vartab.var_name[c->var_nbr] = GET_STR(p, c);
+
+		if (p->vartab.var_used[c->var_nbr]++ == 0) {
+			c->flags |= FLAG_VAR_FIRST_USE;
+			cl->nbr_temporaries++;
+			cl->nbr_vars++;
+			p->nbr_vars++;
+		}
+	}
+
 	for (pl_idx_t i = 0; i < cl->nbr_vars; i++) {
 		if (p->consulting && !p->do_read_term && (p->vartab.var_used[i] == 1) &&
 			(p->vartab.var_name[i][strlen(p->vartab.var_name[i])-1] != '_') &&
@@ -993,19 +1055,6 @@ void term_assign_vars(parser *p, unsigned start, bool rebase)
 			if (!p->m->pl->quiet)
 				fprintf(stdout, "Warning: singleton: %s, near line %u, file '%s'\n", p->vartab.var_name[i], p->line_nbr, get_filename(p->m->filename));
 		}
-	}
-
-	for (pl_idx_t i = 0; i < cl->cidx; i++) {
-		cell *c = cl->cells + i;
-
-		//if (is_literal(c)) printf("*** %u : %u %s\n", i, c->tag, GET_STR(p, c));
-		//if (is_variable(c)) printf("*** %u : %u var_nbr=%d, off=%u\n", i, c->tag, c->var_nbr, c->val_off);
-
-		if (!is_variable(c))
-			continue;
-
-		if (c->val_off == g_anon_s)
-			c->flags |= FLAG_VAR_ANON;
 	}
 
 	cell *c = make_a_cell(p);
@@ -2607,7 +2656,7 @@ static bool process_term(parser *p, cell *p1)
 		h->arity = 0;
 	}
 
-	if (!p->error && !assertz_to_db(p->m, p->cl->nbr_vars, p1, 1)) {
+	if (!p->error && !assertz_to_db(p->m, p->cl->nbr_vars, p->cl->nbr_temporaries, p1, 1)) {
 #if 0
 		if (DUMP_ERRS || !p->do_read_term)
 			printf("Error: '%s', line %u\n", p->token, p->line_nbr);

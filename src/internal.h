@@ -30,10 +30,22 @@ typedef uint32_t pl_idx_t;
 #define atomic_t volatile
 #endif
 
+#ifdef _WIN32
+#define PATH_SEP_CHAR '\\'
+#define NEWLINE_MODE "dos"
+#else
+#define PATH_SEP_CHAR '/'
+#define NEWLINE_MODE "posix"
+#endif
+
 #include "map.h"
 #include "trealla.h"
 #include "cdebug.h"
 #include "imath/imath.h"
+
+#ifdef _WIN32
+char *realpath(const char *path, char resolved_path[PATH_MAX]);
+#endif
 
 static const unsigned INITIAL_NBR_CELLS = 100;		// cells
 
@@ -143,6 +155,7 @@ extern unsigned g_string_cnt, g_literal_cnt;
 #define is_builtin(c) ((c)->flags & FLAG_BUILTIN)
 #define is_function(c) ((c)->flags & FLAG_FUNCTION)
 #define is_tail_recursive(c) ((c)->flags & FLAG_TAIL_REC)
+#define is_temporary(c) ((c)->flags & FLAG_VAR_TEMPORARY)
 #define is_op(c) (c->flags & 0xE000)
 
 typedef struct {
@@ -224,6 +237,7 @@ enum {
 	FLAG_VAR_FIRST_USE=1<<0,			// used with TAG_VAR
 	FLAG_VAR_ANON=1<<1,					// used with TAG_VAR
 	FLAG_VAR_FRESH=1<<2,				// used with TAG_VAR
+	FLAG_VAR_TEMPORARY=1<<3,			// used with TAG_VAR
 
 	FLAG_SPARE1=1<<6,
 	FLAG_SPARE2=1<<7,
@@ -372,7 +386,7 @@ typedef struct {
 struct clause_ {
 	uint64_t ugen_created, ugen_erased;
 	pl_idx_t nbr_cells, cidx;
-	uint32_t nbr_vars;
+	uint32_t nbr_vars, nbr_temporaries;
 	bool is_first_cut:1;
 	bool is_cut_only:1;
 	bool arg1_is_unique:1;

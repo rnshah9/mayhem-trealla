@@ -1,11 +1,7 @@
 #include <stdlib.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 #include <ctype.h>
-#include <float.h>
-#include <sys/time.h>
 #include <sys/stat.h>
 
 #include "internal.h"
@@ -14,10 +10,6 @@
 #include "prolog.h"
 #include "query.h"
 #include "utf8.h"
-
-#ifdef _WIN32
-#define realpath(N,R) _fullpath((R),(N),_MAX_PATH)
-#endif
 
 static const op_table g_ops[] =
 {
@@ -888,7 +880,7 @@ static void check_rule(module *m, db_entry *dbe)
 	}
 }
 
-static db_entry *assert_begin(module *m, unsigned nbr_vars, cell *p1, bool consulting)
+static db_entry *assert_begin(module *m, unsigned nbr_vars, unsigned nbr_temporaries, cell *p1, bool consulting)
 {
 	cell *c = p1;
 
@@ -947,6 +939,7 @@ static db_entry *assert_begin(module *m, unsigned nbr_vars, cell *p1, bool consu
 	copy_cells(dbe->cl.cells, p1, p1->nbr_cells);
 	dbe->cl.cells[p1->nbr_cells] = (cell){0};
 	dbe->cl.cells[p1->nbr_cells].tag = TAG_END;
+	dbe->cl.nbr_temporaries = nbr_temporaries;
 	dbe->cl.nbr_vars = nbr_vars;
 	dbe->cl.nbr_cells = p1->nbr_cells;
 	dbe->cl.cidx = p1->nbr_cells+1;
@@ -1014,13 +1007,13 @@ static bool check_multifile(module *m, predicate *pr, db_entry *dbe)
 	return true;
 }
 
-db_entry *asserta_to_db(module *m, unsigned nbr_vars, cell *p1, bool consulting)
+db_entry *asserta_to_db(module *m, unsigned nbr_vars, unsigned nbr_temporaries, cell *p1, bool consulting)
 {
 	db_entry *dbe;
 	predicate *pr;
 
 	do {
-		dbe = assert_begin(m, nbr_vars, p1, consulting);
+		dbe = assert_begin(m, nbr_vars, nbr_temporaries, p1, consulting);
 		if (!dbe) return NULL;
 		pr = dbe->owner;
 
@@ -1043,13 +1036,13 @@ db_entry *asserta_to_db(module *m, unsigned nbr_vars, cell *p1, bool consulting)
 	return dbe;
 }
 
-db_entry *assertz_to_db(module *m, unsigned nbr_vars, cell *p1, bool consulting)
+db_entry *assertz_to_db(module *m, unsigned nbr_vars, unsigned nbr_temporaries, cell *p1, bool consulting)
 {
 	db_entry *dbe;
 	predicate *pr;
 
 	do {
-		dbe = assert_begin(m, nbr_vars, p1, consulting);
+		dbe = assert_begin(m, nbr_vars, nbr_temporaries, p1, consulting);
 		if (!dbe) return NULL;
 		pr = dbe->owner;
 
@@ -1119,11 +1112,11 @@ void xref_rule(module *m, clause *r, predicate *parent)
 	r->is_unique = false;
 	r->is_tail_rec = false;
 
+	// Check if a variable occurs more than once in the head...
+
 	cell *head = get_head(r->cells);
 	cell *c = head;
 	uint64_t mask = 0;
-
-	// Check if a variable occurs more than once in the head...
 
 	for (pl_idx_t i = 0; i < head->nbr_cells; i++, c++) {
 		if (!is_variable(c))
@@ -1141,6 +1134,8 @@ void xref_rule(module *m, clause *r, predicate *parent)
 
 	// Other stuff...
 
+	cell *body = get_body(r->cells);
+	bool in_body = false;
 	c = r->cells;
 
 	if (c->val_off == g_sys_record_key_s)
@@ -1148,6 +1143,10 @@ void xref_rule(module *m, clause *r, predicate *parent)
 
 	for (pl_idx_t i = 0; i < r->cidx; i++) {
 		cell *c = r->cells + i;
+
+		if (c == body)
+			in_body = true;
+
 		c->flags &= ~FLAG_TAIL_REC;
 
 		if (!is_literal(c))
@@ -1268,6 +1267,7 @@ bool unload_file(module *m, const char *filename)
 			tmpbuf = realloc(tmpbuf, strlen(ptr) + 10 + strlen(filename) + 20);
 			strcpy(tmpbuf, ptr);
 			strcat(tmpbuf, filename+1);
+			convert_path(tmpbuf);
 		}
 	}
 
@@ -1405,6 +1405,7 @@ module *load_file(module *m, const char *filename, bool including)
 			tmpbuf = realloc(tmpbuf, strlen(ptr) + 10 + strlen(filename) + 20);
 			strcpy(tmpbuf, ptr);
 			strcat(tmpbuf, filename+1);
+			convert_path(tmpbuf);
 		}
 	}
 

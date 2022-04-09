@@ -107,8 +107,7 @@ static int daemonize(int argc, char *argv[])
 
 		if ((pid = fork()) < 0) // Error
 			return -1;
-		else if (pid != 0) // Parent
-		{
+		else if (pid != 0) { // Parent
 			if (watchdog) {
 				int status;
 				wait(&status);
@@ -146,14 +145,13 @@ int main(int ac, char *av[])
 
 	char histfile[1024];
 	snprintf(histfile, sizeof(histfile), "%s/%s", homedir, ".tpl_history");
-
+	convert_path(histfile);
 	//bool did_load = false;
 	int i, do_goal = 0, do_lib = 0;
 	int version = 0, daemon = 0;
 	bool ns = false, no_res = false;
 	void *pl = pl_create();
-	if (!pl)
-	{
+	if (!pl) {
 		fprintf(stderr, "Failed to create the prolog system: %s\n", strerror(errno));
 		return 1;
 	}
@@ -216,7 +214,11 @@ int main(int ac, char *av[])
 #endif
 
 		if (!strcmp(av[i], "--consult")) {
+#ifdef _WIN32
+			if (!pl_consult_fp(pl, stdin, ".\\")) {
+#else
 			if (!pl_consult_fp(pl, stdin, "./")) {
+#endif
 				pl_destroy(pl);
 				return 1;
 			}
@@ -235,6 +237,7 @@ int main(int ac, char *av[])
 			continue;
 		} else if (do_lib) {
 			g_tpl_lib = strdup(av[i]);
+			convert_path(g_tpl_lib);
 			do_lib = 0;
 		} else if (do_goal) {
 			do_goal = 0;
@@ -249,7 +252,11 @@ int main(int ac, char *av[])
 	}
 
 	if (!no_res && !version)
+#ifdef _WIN32
+		pl_consult(pl, "~\\.tplrc");
+#else
 		pl_consult(pl, "~/.tplrc");
+#endif
 
 	if (goal) {
 		if (!pl_eval(pl, goal)) {

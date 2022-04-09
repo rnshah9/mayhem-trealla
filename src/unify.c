@@ -1,14 +1,7 @@
 #include <stdlib.h>
-#include <stdio.h>
-#include <signal.h>
-#include <string.h>
-#include <time.h>
 
 #include "internal.h"
-#include "history.h"
-#include "parser.h"
 #include "module.h"
-#include "prolog.h"
 #include "query.h"
 #include "heap.h"
 #include "utf8.h"
@@ -259,6 +252,9 @@ static bool is_cyclic_list_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 		}
 	}
 
+	if (depth)
+		return ret_val;
+
 	l = p1;
 	l_ctx = p1_ctx;
 
@@ -290,7 +286,7 @@ static bool is_cyclic_term_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 		return false;
 
 	if (is_iso_list(p1))
-		return is_cyclic_list_internal(q, p1, p1_ctx, depth+1);
+		return is_cyclic_list_internal(q, p1, p1_ctx, depth);
 
 	if (depth > MAX_DEPTH)
 		return false;
@@ -312,7 +308,7 @@ static bool is_cyclic_term_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 			}
 
 			e->sweep = true;
-			bool ok = is_cyclic_term_internal(q, c, c_ctx, depth+1);
+			bool ok = is_cyclic_term_internal(q, c, c_ctx, depth);
 			e->sweep = false;
 
 			if (ok)
@@ -321,7 +317,7 @@ static bool is_cyclic_term_internal(query *q, cell *p1, pl_idx_t p1_ctx, unsigne
 			cell *c = deref(q, p1, p1_ctx);
 			pl_idx_t c_ctx = q->latest_ctx;
 
-			if (is_cyclic_term_internal(q, c, c_ctx, depth+1))
+			if (is_cyclic_term_internal(q, c, c_ctx, depth))
 				return true;
 		}
 
@@ -957,6 +953,9 @@ bool unify_internal(query *q, cell *p1, pl_idx_t p1_ctx, cell *p2, pl_idx_t p2_c
 
 	return g_disp[p1->tag].fn(q, p1, p2);
 }
+
+// Unification needs to be redone using the sweep/mark
+// method to avoid prechecks & long cycle-info lists.
 
 bool unify(query *q, cell *p1, pl_idx_t p1_ctx, cell *p2, pl_idx_t p2_ctx)
 {

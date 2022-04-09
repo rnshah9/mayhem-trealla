@@ -1,10 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 #include <ctype.h>
-#include <float.h>
-#include <sys/time.h>
 
 #include "internal.h"
 #include "library.h"
@@ -13,9 +10,7 @@
 #include "module.h"
 #include "prolog.h"
 
-#ifdef _WIN32
-#define realpath(N,R) _fullpath((R),(N),_MAX_PATH)
-#endif
+void convert_path(char *filename);
 
 static const size_t INITIAL_POOL_SIZE = 64000;	// bytes
 
@@ -159,8 +154,10 @@ static void g_init()
 {
 	char *ptr = getenv("TPL_LIBRARY_PATH");
 
-	if (ptr)
+	if (ptr) {
 		g_tpl_lib = strdup(ptr);
+		convert_path(g_tpl_lib);
+	}
 }
 
 void pl_destroy(prolog *pl)
@@ -219,7 +216,7 @@ prolog *pl_create()
 		if (g_tpl_lib) {
 			char *src = g_tpl_lib + strlen(g_tpl_lib) - 1;
 
-			while ((src != g_tpl_lib) && (*src != '/'))
+			while ((src != g_tpl_lib) && (*src != PATH_SEP_CHAR))
 				src--;
 
 			*src = '\0';

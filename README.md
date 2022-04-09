@@ -131,7 +131,7 @@ and will require a switch to *libtomath* at some point to remedy.
 Cross-compile for Windows
 =========================
 
-To cross-compile on Linux for Windows...
+To cross-compile on Linux and produce a Windows executable...
 
 	sudo apt-get install mingw-w64
 	make CC=x86_64-w64-mingw32-gcc NOSSL=1 ISOCLINE=1
@@ -139,9 +139,8 @@ To cross-compile on Linux for Windows...
 ```console
 $ file tpl.exe
 tpl.exe: PE32+ executable (console) x86-64, for MS Windows
+$ wine tpl.exe -g test5,halt -f samples/sieve.pl
 ```
-
-NOTE: this is untested.
 
 
 Usage

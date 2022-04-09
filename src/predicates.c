@@ -1,10 +1,8 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdint.h>
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
-#include <time.h>
 #include <sys/time.h>
 #include <sys/stat.h>
 
@@ -26,7 +24,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #define unsetenv(p1)
-#define setenv(p1,p2,p3)
+#define setenv(p1,p2,p3) _putenv_s(p1,p2)
 #define msleep Sleep
 #define localtime_r(p1,p2) localtime(p1)
 #else
@@ -930,6 +928,8 @@ static USE_RESULT pl_status fn_iso_nonvar_1(query *q)
 	return !is_variable(p1);
 }
 
+static bool has_vars(query *q, cell *p1, pl_idx_t p1_ctx, unsigned depth);
+
 static bool has_list_vars(query *q, cell *p1, pl_idx_t p1_ctx, unsigned depth)
 {
 	cell *l = p1;
@@ -1014,7 +1014,7 @@ static bool has_list_vars(query *q, cell *p1, pl_idx_t p1_ctx, unsigned depth)
 	return ret_val;
 }
 
-bool has_vars(query *q, cell *p1, pl_idx_t p1_ctx, unsigned depth)
+static bool has_vars(query *q, cell *p1, pl_idx_t p1_ctx, unsigned depth)
 {
 	if (is_variable(p1))
 		return true;
@@ -1050,16 +1050,12 @@ bool has_vars(query *q, cell *p1, pl_idx_t p1_ctx, unsigned depth)
 			if (ok)
 				return true;
 		} else {
-			cell *c = deref(q, p1, p1_ctx);
-			pl_idx_t c_ctx = q->latest_ctx;
-
-			if (has_vars(q, c, c_ctx, depth+1))
+			if (has_vars(q, p1, p1_ctx, depth+1))
 				return true;
 		}
 
 		p1 += p1->nbr_cells;
 	}
-
 
 	return false;
 }
@@ -2843,7 +2839,7 @@ static USE_RESULT pl_status fn_iso_asserta_1(query *q)
 	if (!is_literal(h))
 		return throw_error(q, h, q->st.curr_frame, "type_error", "callable");
 
-	db_entry *dbe = asserta_to_db(q->st.m, p->cl->nbr_vars, p->cl->cells, 0);
+	db_entry *dbe = asserta_to_db(q->st.m, p->cl->nbr_vars, p->cl->nbr_temporaries, p->cl->cells, 0);
 
 	if (!dbe)
 		return throw_error(q, h, q->st.curr_frame, "permission_error", "modify_static_procedure");
@@ -2910,7 +2906,7 @@ static USE_RESULT pl_status fn_iso_assertz_1(query *q)
 	if (!is_literal(h))
 		return throw_error(q, h, q->st.curr_frame, "type_error", "callable");
 
-	db_entry *dbe = assertz_to_db(q->st.m, p->cl->nbr_vars, p->cl->cells, 0);
+	db_entry *dbe = assertz_to_db(q->st.m, p->cl->nbr_vars, p->cl->nbr_temporaries, p->cl->cells, 0);
 
 	if (!dbe)
 		return throw_error(q, h, q->st.curr_frame, "permission_error", "modify_static_procedure");
@@ -4219,7 +4215,7 @@ static pl_status do_asserta_2(query *q)
 	if (!is_literal(h))
 		return throw_error(q, h, q->latest_ctx, "type_error", "callable");
 
-	db_entry *dbe = asserta_to_db(q->st.m, p->cl->nbr_vars, p->cl->cells, 0);
+	db_entry *dbe = asserta_to_db(q->st.m, p->cl->nbr_vars, p->cl->nbr_temporaries, p->cl->cells, 0);
 
 	if (!dbe)
 		return throw_error(q, h, q->st.curr_frame, "permission_error", "modify_static_procedure");
@@ -4323,7 +4319,7 @@ static pl_status do_assertz_2(query *q)
 	if (!is_literal(h))
 		return throw_error(q, h, q->latest_ctx, "type_error", "callable");
 
-	db_entry *dbe = assertz_to_db(q->st.m, p->cl->nbr_vars, p->cl->cells, 0);
+	db_entry *dbe = assertz_to_db(q->st.m, p->cl->nbr_vars, p->cl->nbr_temporaries, p->cl->cells, 0);
 
 	if (!dbe)
 		return throw_error(q, h, q->st.curr_frame, "permission_error", "modify_static_procedure");
@@ -5847,9 +5843,9 @@ static USE_RESULT pl_status fn_getenv_2(query *q)
 	cell tmp;
 
 	if (is_string(p1))
-		may_error(make_string(&tmp, (char*)value));
+		may_error(make_string(&tmp, value));
 	else
-		may_error(make_cstring(&tmp, (char*)value));
+		may_error(make_cstring(&tmp, value));
 
 	pl_status ok = unify(q, p2, p2_ctx, &tmp, q->st.curr_frame);
 	unshare_cell(&tmp);
@@ -6968,7 +6964,7 @@ static USE_RESULT pl_status fn_use_module_1(query *q)
 			memcpy(src, lib->start, *lib->len);
 			src[*lib->len] = '\0';
 			ASTRING(s1);
-			ASTRING_sprintf(s1, "library/%s", lib->name);
+			ASTRING_sprintf(s1, "library%c%s", PATH_SEP_CHAR, lib->name);
 			m = load_text(q->st.m, src, ASTRING_cstr(s1));
 			ASTRING_free(s1);
 			free(src);
@@ -6982,7 +6978,7 @@ static USE_RESULT pl_status fn_use_module_1(query *q)
 			return pl_success;
 		}
 
-		snprintf(dstbuf, sizeof(dstbuf), "%s/", g_tpl_lib);
+		snprintf(dstbuf, sizeof(dstbuf), "%s%c", g_tpl_lib, PATH_SEP_CHAR);
 		char *dst = dstbuf + strlen(dstbuf);
 		pl_idx_t ctx = 0;
 		print_term_to_buf(q, dst, sizeof(dstbuf)-strlen(g_tpl_lib), p1, ctx, 1, 0, 0);

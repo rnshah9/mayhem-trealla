@@ -11,7 +11,6 @@
 
 #ifdef _WIN32
 #define USE_MMAP 0
-#define realpath(N,R) _fullpath((R),(N),_MAX_PATH)
 #define mkdir(p1,p2) mkdir(p1)
 #else
 #ifndef USE_MMAP
@@ -36,15 +35,133 @@
 #include "history.h"
 
 #ifdef _WIN32
-/* The original code is public domain -- Will Hartung 4/9/09 */
-/* Modifications, public domain as well, by Antti Haapala, 11/10/17
-   - Switched to getc on 5/23/19 */
+#include <windows.h>
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <errno.h>
-#include <stdint.h>
+char *realpath(const char *path, char resolved_path[PATH_MAX])
+{
+  char *return_path = 0;
 
+  if (path) //Else EINVAL
+  {
+    if (resolved_path)
+    {
+      return_path = resolved_path;
+    }
+    else
+    {
+      //Non standard extension that glibc uses
+      return_path = malloc(PATH_MAX);
+    }
+
+    if (return_path) //Else EINVAL
+    {
+      //This is a Win32 API function similar to what realpath() is supposed to do
+      size_t size = GetFullPathNameA(path, PATH_MAX, return_path, 0);
+
+      //GetFullPathNameA() returns a size larger than buffer if buffer is too small
+      if (size > PATH_MAX)
+      {
+        if (return_path != resolved_path) //Malloc'd buffer - Unstandard extension retry
+        {
+          size_t new_size;
+
+          free(return_path);
+          return_path = malloc(size);
+
+          if (return_path)
+          {
+            new_size = GetFullPathNameA(path, size, return_path, 0); //Try again
+
+            if (new_size > size) //If it's still too large, we have a problem, don't try again
+            {
+              free(return_path);
+              return_path = 0;
+              errno = ENAMETOOLONG;
+            }
+            else
+            {
+              size = new_size;
+            }
+          }
+          else
+          {
+            //I wasn't sure what to return here, but the standard does say to return EINVAL
+            //if resolved_path is null, and in this case we couldn't malloc large enough buffer
+            errno = EINVAL;
+          }
+        }
+        else //resolved_path buffer isn't big enough
+        {
+          return_path = 0;
+          errno = ENAMETOOLONG;
+        }
+      }
+
+      //GetFullPathNameA() returns 0 if some path resolve problem occured
+      if (!size)
+      {
+        if (return_path != resolved_path) //Malloc'd buffer
+        {
+          free(return_path);
+        }
+
+        return_path = 0;
+
+        //Convert MS errors into standard errors
+        switch (GetLastError())
+        {
+          case ERROR_FILE_NOT_FOUND:
+            errno = ENOENT;
+            break;
+
+          case ERROR_PATH_NOT_FOUND: case ERROR_INVALID_DRIVE:
+            errno = ENOTDIR;
+            break;
+
+          case ERROR_ACCESS_DENIED:
+            errno = EACCES;
+            break;
+
+          default: //Unknown Error
+            errno = EIO;
+            break;
+        }
+      }
+
+      //If we get to here with a valid return_path, we're still doing good
+      if (return_path)
+      {
+        struct stat stat_buffer;
+
+        //Make sure path exists, stat() returns 0 on success
+        if (stat(return_path, &stat_buffer))
+        {
+          if (return_path != resolved_path)
+          {
+            free(return_path);
+          }
+
+          return_path = 0;
+          //stat() will set the correct errno for us
+        }
+        //else we succeeded!
+      }
+    }
+    else
+    {
+      errno = EINVAL;
+    }
+  }
+  else
+  {
+    errno = EINVAL;
+  }
+
+  return return_path;
+}
+#endif
+
+#ifdef _WIN32
 // if typedef doesn't exist (msvc, blah)
 typedef intptr_t ssize_t;
 
@@ -449,6 +566,18 @@ static USE_RESULT pl_status fn_iso_stream_property_2(query *q)
 	return pl_success;
 }
 
+void convert_path(char *filename)
+{
+	char *src = filename;
+
+	while (*src) {
+		if ((*src == '/') || (*src == '\\'))
+			*src = PATH_SEP_CHAR;
+
+		src++;
+	}
+}
+
 #ifndef SANDBOX
 #ifndef _WIN32
 static USE_RESULT pl_status fn_popen_4(query *q)
@@ -463,7 +592,7 @@ static USE_RESULT pl_status fn_popen_4(query *q)
 	if (n < 0)
 		return throw_error(q, p1, p1_ctx, "resource_error", "too_many_streams");
 
-	const char *filename;
+	char *filename;
 
 	if (is_atom(p1))
 		filename = src = DUP_SLICE(q, p1);
@@ -479,6 +608,8 @@ static USE_RESULT pl_status fn_popen_4(query *q)
 		src = chars_list_to_string(q, p1, p1_ctx, len);
 		filename = src;
 	}
+
+	convert_path(filename);
 
 	stream *str = &q->pl->streams[n];
 	str->domain = true;
@@ -571,7 +702,7 @@ static USE_RESULT pl_status fn_iso_open_4(query *q)
 	if (n < 0)
 		return throw_error(q, p1, p1_ctx, "resource_error", "too_many_streams");
 
-	const char *filename;
+	char *filename;
 	stream *oldstr = NULL;
 
 	if (is_structure(p1) && (p1->arity == 1) && !CMP_SLICE2(q, p1, "stream")) {
@@ -596,6 +727,7 @@ static USE_RESULT pl_status fn_iso_open_4(query *q)
 		filename = src = chars_list_to_string(q, p1, p1_ctx, len);
 	}
 
+	convert_path(filename);
 	stream *str = &q->pl->streams[n];
 	may_ptr_error(str->filename = strdup(filename));
 	may_ptr_error(str->name = strdup(filename));
@@ -2936,6 +3068,8 @@ static USE_RESULT pl_status fn_read_file_to_string_3(query *q)
 	} else
 		filename = src = DUP_SLICE(q, p1);
 
+	convert_path(filename);
+
 	bool bom_specified = false, use_bom = false, is_binary = false;
 	LIST_HANDLER(p3);
 
@@ -3027,6 +3161,7 @@ static pl_status do_consult(query *q, cell *p1, pl_idx_t p1_ctx)
 	if (is_atom(p1)) {
 		char *src = DUP_SLICE(q, p1);
 		char *filename = relative_to(q->st.m->filename, src);
+		convert_path(filename);
 		//unload_file(q->st.m, filename);
 		free(src);
 
@@ -3055,6 +3190,7 @@ static pl_status do_consult(query *q, cell *p1, pl_idx_t p1_ctx)
 	char *filename = GET_STR(q, file);
 	tmp_m->make_public = 1;
 	filename = relative_to(q->st.m->filename, filename);
+	convert_path(filename);
 	unload_file(q->st.m, filename);
 
 	if (!load_file(tmp_m, filename, false)) {
@@ -3074,6 +3210,7 @@ static pl_status do_deconsult(query *q, cell *p1, pl_idx_t p1_ctx)
 	if (is_atom(p1)) {
 		char *src = DUP_SLICE(q, p1);
 		char *filename = relative_to(q->st.m->filename, src);
+		convert_path(filename);
 		unload_file(q->st.m, filename);
 		free(src);
 		free(filename);
@@ -3096,6 +3233,7 @@ static pl_status do_deconsult(query *q, cell *p1, pl_idx_t p1_ctx)
 	char *filename = GET_STR(q, file);
 	tmp_m->make_public = 1;
 	filename = relative_to(q->st.m->filename, filename);
+	convert_path(filename);
 	unload_file(q->st.m, filename);
 	free(filename);
 	return pl_success;
@@ -3171,6 +3309,7 @@ static USE_RESULT pl_status fn_savefile_2(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	FILE *fp = fopen(filename, "wb");
 	may_ptr_error(fp);
 	fwrite(GET_STR(q, p2), 1, LEN_STR(q, p2), fp);
@@ -3197,6 +3336,7 @@ static USE_RESULT pl_status fn_loadfile_2(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	FILE *fp = fopen(filename, "rb");
 	free(filename);
 
@@ -3256,6 +3396,7 @@ static USE_RESULT pl_status fn_getfile_2(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	FILE *fp = fopen(filename, "r");
 	free(filename);
 
@@ -3422,15 +3563,15 @@ static char *fixup(const char *srcptr)
 	char *dst = tmpbuf;
 
 	while (*src) {
-		if ((src[0] == '.') && (src[1] == '.') && (src[2] == '/')) {
+		if ((src[0] == '.') && (src[1] == '.') && ((src[2] == '/') || (src[2] == '\\'))) {
 			dst -= 2;
 
-			while ((dst != tmpbuf) && (*dst != '/'))
+			while ((dst != tmpbuf) && ((*dst != '/') || (*dst != '\\') || (*dst != ':')))
 				dst--;
 
 			src += 2;
 			dst++;
-		} else if ((src[0] == '.') && (src[1] == '/')) {
+		} else if ((src[0] == '.') && ((src[1] == '/') || (src[1] == '\\'))) {
 			src += 1;
 		} else
 			*dst++ = *src;
@@ -3455,7 +3596,7 @@ static USE_RESULT pl_status fn_absolute_file_name_3(query *q)
 	may_ptr_error(here);
 	char *ptr = here + strlen(here) - 1;
 
-	while (*ptr && (*ptr != '/')) {
+	while (*ptr && (*ptr != '/') && (*ptr != '\\') && (*ptr != ':')) {
 		ptr--;
 		*ptr = '\0';
 	}
@@ -3472,6 +3613,7 @@ static USE_RESULT pl_status fn_absolute_file_name_3(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	LIST_HANDLER(p_opts);
 
 	while (is_list(p_opts) && !g_tpl_interrupt) {
@@ -3497,16 +3639,17 @@ static USE_RESULT pl_status fn_absolute_file_name_3(query *q)
 
 	char *tmpbuf = NULL;
 	const char *s = filename;
+	//printf("*** from=%s, cwd=%s", filename, cwd);
 
 	if (expand && (*s == '$')) {
 		char envbuf[PATH_MAX];
 		char *dst = envbuf;
 		s++;
 
-		while (*s && (*s != '/') && ((dst-envbuf-1) != sizeof(envbuf)))
+		while (*s && (*s != '/') && (*s != '\\') && ((dst-envbuf-1) != sizeof(envbuf)))
 			*dst++ = *s++;
 
-		if (*s == '/')
+		if ((*s == '\\') || (*s == '/'))
 			s++;
 
 		*dst = '\0';
@@ -3518,6 +3661,7 @@ static USE_RESULT pl_status fn_absolute_file_name_3(query *q)
 		tmpbuf = malloc(buflen);
 		may_ptr_error(tmpbuf);
 		snprintf(tmpbuf, buflen, "%s/%s", ptr, s);
+		convert_path(tmpbuf);
 		char *tmpbuf2;
 
 		if ((tmpbuf2 = realpath(tmpbuf, NULL)) == NULL) {
@@ -3532,11 +3676,17 @@ static USE_RESULT pl_status fn_absolute_file_name_3(query *q)
 
 			may_ptr_error(tmpbuf);
 
-			if (*s != '/') {
+			if ((*s != '/') && (*s != '\\')
+#ifdef _WIN32
+				&& (s[1] != ':')
+#endif
+				) {
 				size_t buflen = strlen(tmpbuf)+1+strlen(s)+1;
 				char *tmp = malloc(buflen);
 				may_ptr_error(tmp, free(tmpbuf));
 				snprintf(tmp, buflen, "%s/%s", tmpbuf, s);
+				convert_path(tmp);
+				//printf("*** here2 %s\n", tmp);
 				free(tmpbuf);
 				tmpbuf = fixup(tmp);
 				may_ptr_error(tmpbuf);
@@ -3548,6 +3698,7 @@ static USE_RESULT pl_status fn_absolute_file_name_3(query *q)
 		}
 	}
 
+	//printf(", to=%s\n", tmpbuf);
 	free(filename);
 
 	if (cwd != here)
@@ -3680,6 +3831,7 @@ static USE_RESULT pl_status fn_access_file_2(query *q)
 		return throw_error(q, p2, p2_ctx, "domain_error", "mode");
 	}
 
+	convert_path(filename);
 	struct stat st = {0};
 	int status = stat(filename, &st);
 
@@ -3715,9 +3867,11 @@ static USE_RESULT pl_status fn_exists_file_1(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	struct stat st = {0};
 
 	if (stat(filename, &st)) {
+		//printf("*** here %s\n", filename);
 		free(filename);
 		return pl_failure;
 	}
@@ -3755,6 +3909,7 @@ static USE_RESULT pl_status fn_directory_files_2(query *q)
 		return throw_error(q, p1, p1_ctx, "existence_error", "directory");
 	}
 
+	convert_path(filename);
 	DIR *dirp = opendir(filename);
 
 	if (!dirp) {
@@ -3805,6 +3960,7 @@ static USE_RESULT pl_status fn_delete_file_1(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	struct stat st = {0};
 
 	if (stat(filename, &st)) {
@@ -3847,6 +4003,8 @@ static USE_RESULT pl_status fn_rename_file_2(query *q)
 	} else
 		filename2 = DUP_SLICE(q, p2);
 
+	convert_path(filename1);
+	convert_path(filename2);
 	struct stat st = {0};
 
 	if (stat(filename1, &st)) {
@@ -3891,6 +4049,8 @@ static USE_RESULT pl_status fn_copy_file_2(query *q)
 	} else
 		filename2 = DUP_SLICE(q, p2);
 
+	convert_path(filename1);
+	convert_path(filename2);
 	FILE *fp1 = fopen(filename1, "rb");
 
 	if (!fp1) {
@@ -3949,6 +4109,7 @@ static USE_RESULT pl_status fn_time_file_2(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	struct stat st = {0};
 
 	if (stat(filename, &st)) {
@@ -3980,6 +4141,7 @@ static USE_RESULT pl_status fn_size_file_2(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	struct stat st = {0};
 
 	if (stat(filename, &st)) {
@@ -4010,6 +4172,7 @@ static USE_RESULT pl_status fn_exists_directory_1(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	struct stat st = {0};
 
 	if (stat(filename, &st)) {
@@ -4042,6 +4205,7 @@ static USE_RESULT pl_status fn_make_directory_1(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	struct stat st = {0};
 
 	if (!stat(filename, &st)) {
@@ -4073,6 +4237,7 @@ static USE_RESULT pl_status fn_make_directory_path_1(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	struct stat st = {0};
 
 	for (char *ptr = filename+1; *ptr; ptr++) {
@@ -4112,7 +4277,8 @@ static USE_RESULT pl_status fn_working_directory_2(query *q)
 	GET_NEXT_ARG(p_new,atom_or_list_or_var);
 	char tmpbuf[PATH_MAX], tmpbuf2[PATH_MAX];
 	char *oldpath = getcwd(tmpbuf, sizeof(tmpbuf));
-	snprintf(tmpbuf2, sizeof(tmpbuf2), "%s%s", oldpath, PATH_SEP);
+	snprintf(tmpbuf2, sizeof(tmpbuf2), "%s/", oldpath);
+	convert_path(tmpbuf2);
 	oldpath = tmpbuf2;
 	cell tmp;
 	may_error(make_string(&tmp, oldpath));
@@ -4158,6 +4324,7 @@ static USE_RESULT pl_status fn_chdir_1(query *q)
 	} else
 		filename = DUP_SLICE(q, p1);
 
+	convert_path(filename);
 	pl_status ok = !chdir(filename);
 	free(filename);
 	return ok;
