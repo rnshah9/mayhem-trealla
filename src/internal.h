@@ -264,17 +264,17 @@ enum {
 #define IS_POSTFIX(op) (((op) == OP_XF) || ((op) == OP_YF))
 #define IS_INFIX(op) (((op) == OP_XFX) || ((op) == OP_XFY) || ((op) == OP_YFX))
 
-#define CELL_PREFIX(c) IS_PREFIX(GET_OP(c))
-#define CELL_POSTFIX(c) IS_POSTFIX(GET_OP(c))
-#define CELL_INFIX(c) IS_INFIX(GET_OP(c))
+#define is_prefix(c) IS_PREFIX(GET_OP(c))
+#define is_postfix(c) IS_POSTFIX(GET_OP(c))
+#define is_infix(c) IS_INFIX(GET_OP(c))
 
-#define IS_FX(c) (GET_OP(c) == OP_FX)
-#define IS_FY(c) (GET_OP(c) == OP_FY)
-#define IS_XF(c) (GET_OP(c) == OP_XF)
-#define IS_YF(c) (GET_OP(c) == OP_YF)
-#define IS_YFX(c) (GET_OP(c) == OP_YFX)
-#define IS_XFX(c) (GET_OP(c) == OP_XFX)
-#define IS_XFY(c) (GET_OP(c) == OP_XFY)
+#define is_fx(c) (GET_OP(c) == OP_FX)
+#define is_fy(c) (GET_OP(c) == OP_FY)
+#define is_xf(c) (GET_OP(c) == OP_XF)
+#define is_yf(c) (GET_OP(c) == OP_YF)
+#define is_yfx(c) (GET_OP(c) == OP_YFX)
+#define is_xfx(c) (GET_OP(c) == OP_XFX)
+#define is_xfy(c) (GET_OP(c) == OP_XFY)
 
 #define SET_OP(c,op) (CLR_OP(c), (c)->flags |= (((uint16_t)(op)) << 13))
 #define CLR_OP(c) ((c)->flags &= ~((uint16_t)(0xF) << 13))
@@ -452,8 +452,8 @@ struct trail_ {
 struct slot_ {
 	cell c;
 	pl_idx_t ctx;
+	uint16_t mark;
 	bool sweep:1;
-	bool mark:1;
 };
 
 struct frame_ {
@@ -580,6 +580,7 @@ struct query_ {
 	pl_idx_t h_size, tmph_size, tot_heaps, tot_heapsize, undo_lo_tp, undo_hi_tp;
 	pl_idx_t q_size[MAX_QUEUES], tmpq_size[MAX_QUEUES], qp[MAX_QUEUES];
 	uint32_t cgen;
+	uint16_t mgen;
 	uint8_t nv_mask[MAX_ARITY];
 	prolog_flags flags;
 	enum q_retry retry;
