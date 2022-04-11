@@ -469,7 +469,35 @@ static bool is_cyclic_list_internal(query *q, cell *p1, pl_idx_t p1_ctx)
 		}
 	}
 
-	return is_cyclic_term_internal(q, l, l_ctx);
+	bool ok = is_cyclic_term_internal(q, l, l_ctx);
+
+	l = p1;
+	l_ctx = p1_ctx;
+
+	while (is_iso_list(l) && !g_tpl_interrupt) {
+		cell *c = LIST_HEAD(l);
+
+		if (is_variable(c)) {
+			const frame *f = GET_FRAME(l_ctx);
+			slot *e = GET_SLOT(f, c->var_nbr);
+			e->sweep = false;
+			e->mark = 0;
+		}
+
+		l = LIST_TAIL(l);
+
+		if (is_variable(l)) {
+			const frame *f = GET_FRAME(l_ctx);
+			slot *e = GET_SLOT(f, l->var_nbr);
+			e->sweep = false;
+			e->mark = 0;
+		}
+
+		l = deref(q, l, l_ctx);
+		l_ctx = q->latest_ctx;
+	}
+
+	return ok;
 }
 
 static bool is_cyclic_term_internal(query *q, cell *p1, pl_idx_t p1_ctx)
@@ -485,7 +513,6 @@ static bool is_cyclic_term_internal(query *q, cell *p1, pl_idx_t p1_ctx)
 	p1++;
 
 	while (arity-- && !g_tpl_interrupt) {
-
 		if (is_variable(p1)) {
 			frame *f = GET_FRAME(p1_ctx);
 			slot *e = GET_SLOT(f, p1->var_nbr);
@@ -1011,9 +1038,6 @@ bool unify_internal(query *q, cell *p1, pl_idx_t p1_ctx, cell *p2, pl_idx_t p2_c
 	if (depth > MAX_DEPTH)
 		return false;
 
-	if (p1_ctx == q->st.curr_frame)
-		q->no_tco = true;
-
 	if (is_variable(p1) && is_variable(p2)) {
 		if (p2_ctx > p1_ctx)
 			set_var(q, p2, p2_ctx, p1, p1_ctx);
@@ -1025,8 +1049,20 @@ bool unify_internal(query *q, cell *p1, pl_idx_t p1_ctx, cell *p2, pl_idx_t p2_c
 		return true;
 	}
 
-	if (is_variable(p1)) {
+	if (is_variable(p2)) {
+		cell *tmp = p2;
+		pl_idx_t tmp_ctx = p2_ctx;
+		p2 = p1;
+		p2_ctx = p1_ctx;
+		p1 = tmp;
+		p1_ctx = tmp_ctx;
+	} else if (is_variable(p1))
 		q->has_vars = true;
+
+	if (p1_ctx == q->st.curr_frame)
+		q->no_tco = true;
+
+	if (is_variable(p1)) {
 		bool was_cyclic = false;
 
 		if (q->flags.occurs_check == OCCURS_TRUE) {
@@ -1045,31 +1081,6 @@ bool unify_internal(query *q, cell *p1, pl_idx_t p1_ctx, cell *p2, pl_idx_t p2_c
 		} else if (q->flags.occurs_check == OCCURS_ERROR) {
 			if (!was_cyclic && is_cyclic_term(q, p2, p2_ctx))
 				return (throw_error(q, p2, p2_ctx, "representation_error", "term"), false);
-		}
-
-		return true;
-	}
-
-	if (is_variable(p2)) {
-		//q->has_vars = true;
-		bool was_cyclic = false;
-
-		if (q->flags.occurs_check == OCCURS_TRUE) {
-			if (is_cyclic_term(q, p1, p1_ctx))
-				was_cyclic = true;
-		} else if (q->flags.occurs_check == OCCURS_ERROR) {
-			if (is_cyclic_term(q, p1, p1_ctx))
-				was_cyclic = true;
-		}
-
-		set_var(q, p2, p2_ctx, p1, p1_ctx);
-
-		if (q->flags.occurs_check == OCCURS_TRUE) {
-			if (!was_cyclic && is_cyclic_term(q, p1, p1_ctx))
-				return false;
-		} else if (q->flags.occurs_check == OCCURS_ERROR) {
-			if (!was_cyclic && is_cyclic_term(q, p1, p1_ctx))
-				return (throw_error(q, p1, p1_ctx, "representation_error", "term"), false);
 		}
 
 		return true;

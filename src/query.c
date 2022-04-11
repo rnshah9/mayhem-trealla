@@ -869,7 +869,7 @@ void cut_me(query *q, bool inner_cut, bool soft_cut)
 			pl_idx_t c_ctx = q->latest_ctx;
 			c = deref(q, c+1, c_ctx);
 			c_ctx = q->latest_ctx;
-			cell *tmp = deep_copy_to_heap(q, c, c_ctx, false, false);
+			cell *tmp = deep_copy_to_heap(q, c, c_ctx, false);
 			unify(q, c, c_ctx, tmp, q->st.curr_frame);
 			do_cleanup(q, tmp);
 			break;
@@ -1075,8 +1075,8 @@ void set_var(query *q, const cell *c, pl_idx_t c_ctx, cell *v, pl_idx_t v_ctx)
 
 	e->ctx = v_ctx;
 
-	if (q->flags.occurs_check != OCCURS_FALSE)
-		e->sweep = true;
+	//if (q->flags.occurs_check != OCCURS_FALSE)
+	//	e->sweep = true;
 }
 
 void reset_var(query *q, const cell *c, pl_idx_t c_ctx, cell *v, pl_idx_t v_ctx, bool trailing)
