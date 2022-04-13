@@ -797,7 +797,7 @@ static void directives(parser *p, cell *d)
 
 					if (!is_multifile_in_db(p->m->pl, mod, name, arity)) {
 						if (DUMP_ERRS || !p->do_read_term)
-							fprintf(stdout, "Error: not multile %s:%s/%u\n", mod, name, arity);
+							fprintf(stdout, "Error: not multifile %s:%s/%u\n", mod, name, arity);
 
 						p->error = true;
 						return;
@@ -897,7 +897,12 @@ static void check_first_cut(parser *p)
 		if (!(c->flags&FLAG_BUILTIN))
 			break;
 
-		if (!strcmp(GET_STR(p, c), ","))
+		if (!strcmp(GET_STR(p, c), ",")
+			|| !strcmp(GET_STR(p, c), ";")
+			|| !strcmp(GET_STR(p, c), "->")
+			|| !strcmp(GET_STR(p, c), "*->")
+			|| !strcmp(GET_STR(p, c), "-->")
+			)
 			;
 		else if (!IS_OP(c) && !strcmp(GET_STR(p, c), "!")) {
 			p->cl->is_first_cut = true;
@@ -3100,6 +3105,13 @@ unsigned tokenize(parser *p, bool args, bool consing)
 			) {
 				specifier = 0;
 				priority = 0;
+			} else if ((nextch == ';') || (nextch == '*') || (nextch == '-')) {
+				if (DUMP_ERRS || !p->do_read_term)
+					fprintf(stdout, "Error: syntax error, incomplete, line %d '%s'\n", p->line_nbr, p->save_line?p->save_line:"");
+
+				p->error_desc = "syntax_error_incomplete";
+				p->error = true;
+				break;
 			}
 		}
 

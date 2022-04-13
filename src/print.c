@@ -628,18 +628,23 @@ static const char *get_slot_name(query *q, pl_idx_t slot_idx)
 {
 	for (unsigned i = 0; i < q->pl->tab_idx; i++) {
 		if (q->pl->tab1[i] == slot_idx) {
+			if (q->pl->tab2[i] == slot_idx)
+				return varformat(i);
+
 			unsigned offset = 0;
 
 			while (q->ignore[i+offset])
 				offset++;
 
 			q->ignore[i+offset] = true;
+			q->pl->tab2[i] = slot_idx;
 			return varformat(i+offset);
 		}
 	}
 
 	unsigned i = q->pl->tab_idx++;
 	q->pl->tab1[i] = slot_idx;
+	q->pl->tab2[i] = 0;
 	return varformat(i);
 }
 
@@ -1068,6 +1073,13 @@ ssize_t print_term_to_buf(query *q, char *dst, size_t dstlen, cell *c, pl_idx_t 
 
 		bool quote = q->quoted && has_spaces(src, LEN_STR(q,c));
 
+		if (is_literal(rhs) && !rhs->arity && !parens) {
+			const char *rhs_src = GET_STR(q, rhs);
+			if (!iswalpha(*rhs_src) && !isdigit(*rhs_src) && strcmp(rhs_src, "[]") && strcmp(rhs_src, "{}"))
+				space = 1;
+		}
+
+
 		if (quote) dst += snprintf(dst, dstlen, "%s", quote?"'":"");
 		dst += plain(dst, dstlen, src, srclen);
 		if (quote) dst += snprintf(dst, dstlen, "%s", quote?"'":"");
@@ -1118,6 +1130,13 @@ ssize_t print_term_to_buf(query *q, char *dst, size_t dstlen, cell *c, pl_idx_t 
 		|| !strcmp(src, "?=")
 //		|| (*src == '#')
 		|| !*src;
+
+	if (is_literal(lhs) && !lhs->arity && !lhs_parens) {
+		const char *lhs_src = GET_STR(q, lhs);
+		if (!iswalpha(*lhs_src) && !isdigit(*lhs_src) && strcmp(lhs_src, "[]") && strcmp(lhs_src, "{}"))
+			space = 1;
+	}
+
 	if (space) dst += snprintf(dst, dstlen, "%s", " ");
 
 	int quote = q->quoted && has_spaces(src, LEN_STR(q,c));
