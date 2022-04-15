@@ -241,7 +241,7 @@ static bool is_all_vars(cell *c)
 	return true;
 }
 
-static bool is_ground(cell *c)
+static bool is_ground(const cell *c)
 {
 	pl_idx_t nbr_cells = c->nbr_cells;
 
@@ -621,7 +621,7 @@ void trim_trail(query *q)
 	}
 }
 
-static bool check_slots(const query *q, frame *f, clause *r)
+static bool check_slots(const query *q, const frame *f, const clause *r)
 {
 	if (r != NULL) {
 		if (f->nbr_vars != r->nbr_vars)
@@ -1012,7 +1012,7 @@ unsigned create_vars(query *q, unsigned cnt)
 
 	unsigned var_nbr = f->nbr_vars;
 
-	if (check_slot(q, cnt) != pl_success)
+	if (check_slot(q, var_nbr + cnt) != pl_success)
 		return 0;
 
 	if ((f->base_slot_nbr + f->nbr_slots) >= q->st.sp) {
@@ -1027,7 +1027,7 @@ unsigned create_vars(query *q, unsigned cnt)
 		pl_idx_t save_overflow = f->overflow;
 		f->overflow = q->st.sp;
 		pl_idx_t cnt2 = f->nbr_vars - f->nbr_slots;
-		memmove(q->slots+f->overflow, q->slots+save_overflow, sizeof(slot)*cnt2);
+		memmove(q->slots+f->overflow, q->slots + save_overflow, sizeof(slot)*cnt2);
 		q->st.sp += cnt2 + cnt;
 	}
 
@@ -1061,10 +1061,7 @@ void set_var(query *q, const cell *c, pl_idx_t c_ctx, cell *v, pl_idx_t v_ctx)
 	if (c_attrs)
 		q->run_hook = true;
 
-	// The q->cp-1 is because we have to allow for the temporary
-	// choice-point we are in...
-
-	if ((q->cp > INITIAL_FRAME) || c_attrs)
+	if (((q->cp > INITIAL_FRAME) || c_attrs) && !q->no_trail)
 		add_trail(q, c_ctx, c->var_nbr, c_attrs, c_attrs_ctx);
 
 	if (is_structure(v)) {
