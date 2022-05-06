@@ -1737,9 +1737,9 @@ static USE_RESULT pl_status fn_iso_univ_2(query *q)
 		while (is_list(p2)) {
 			CHECK_INTERRUPT();
 			cell *h = LIST_HEAD(p2);
-			cell *c = alloc_on_tmp(q, h->nbr_cells);
-			may_ptr_error(c);
-			copy_cells(c, h, h->nbr_cells);
+			cell *tmp = alloc_on_tmp(q, h->nbr_cells);
+			may_heap_error(tmp);
+			copy_cells(tmp, h, h->nbr_cells);
 			p2 = LIST_TAIL(p2);
 			arity++;
 		}
@@ -1753,6 +1753,9 @@ static USE_RESULT pl_status fn_iso_univ_2(query *q)
 		arity--;
 		cell *tmp2 = get_tmp_heap(q, 0);
 		pl_idx_t nbr_cells = tmp_heap_used(q);
+
+		if (is_string(tmp2))
+			return throw_error(q, tmp2, q->st.curr_frame, "type_error", "atom");
 
 		if (is_cstring(tmp2)) {
 			share_cell(tmp2);
@@ -1785,10 +1788,12 @@ static USE_RESULT pl_status fn_iso_univ_2(query *q)
 			}
 		}
 
+#if 0
 		unsigned specifier;
 
 		if (search_op(q->st.m, GET_STR(q, tmp), &specifier, arity == 1))
 			SET_OP(tmp, specifier);
+#endif
 
 		return unify(q, p1, p1_ctx, tmp, q->st.curr_frame);
 	}

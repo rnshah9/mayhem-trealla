@@ -1210,7 +1210,7 @@ static bool reduce(parser *p, pl_idx_t start_idx, bool last_op)
 			if (DUMP_ERRS || !p->do_read_term)
 				fprintf(stdout, "Error: missing operand to '%s', line %u, '%s'\n", GET_STR(p, c), p->line_nbr, p->save_line?p->save_line:"");
 
-			p->error_desc = "operatand_missing";
+			p->error_desc = "operand_missing";
 			p->error = true;
 			return false;
 		}
@@ -1265,6 +1265,8 @@ void reset(parser *p)
 	p->comment = false;
 	p->error = false;
 	p->last_close = false;
+	p->nesting_parens = p->nesting_brackets = p->nesting_braces = 0;
+	p->error_desc = NULL;
 }
 
 static bool dcg_expansion(parser *p)
@@ -2306,7 +2308,7 @@ bool get_token(parser *p, bool last_op, bool was_postfix)
 			if (DUMP_ERRS || !p->do_read_term)
 				fprintf(stdout, "Error: syntax error, incomplete statement, line %d '%s'\n", p->line_nbr, p->save_line?p->save_line:"");
 
-			p->error_desc = "cincomplete_statement";
+			p->error_desc = "incomplete_statement";
 			p->error = true;
 			return false;
 		}
@@ -2526,7 +2528,7 @@ bool get_token(parser *p, bool last_op, bool was_postfix)
 				if (DUMP_ERRS || !p->do_read_term)
 					fprintf(stdout, "Error: syntax error, incomplete statement, line %d '%s'\n", p->line_nbr, p->save_line?p->save_line:"");
 
-				p->error_desc = "cincomplete_statement";
+				p->error_desc = "incomplete_statement";
 				p->error = true;
 				return false;
 			}
@@ -2731,7 +2733,7 @@ unsigned tokenize(parser *p, bool args, bool consing)
 				if (DUMP_ERRS || !p->do_read_term)
 					fprintf(stdout, "Error: syntax error, incomplete statement, line %d '%s'\n", p->line_nbr, p->save_line?p->save_line:"");
 
-				p->error_desc = "cincomplete_statement";
+				p->error_desc = "incomplete_statement";
 				p->error = true;
 				return false;
 			}
@@ -3074,7 +3076,7 @@ unsigned tokenize(parser *p, bool args, bool consing)
 				if (DUMP_ERRS || !p->do_read_term)
 					fprintf(stdout, "Error: syntax error, incomplete, line %d '%s'\n", p->line_nbr, p->save_line?p->save_line:"");
 
-				p->error_desc = "syntax_error_incomplete";
+				p->error_desc = "incomplete";
 				p->error = true;
 				break;
 			}
@@ -3086,7 +3088,7 @@ unsigned tokenize(parser *p, bool args, bool consing)
 				if (DUMP_ERRS || !p->do_read_term)
 					fprintf(stdout, "Error: syntax error, incomplete, needs parenthesis, line %d '%s'\n", p->line_nbr, p->save_line?p->save_line:"");
 
-				p->error_desc = "syntax_error_incomplete";
+				p->error_desc = "incomplete";
 				p->error = true;
 				break;
 			}
@@ -3111,7 +3113,7 @@ unsigned tokenize(parser *p, bool args, bool consing)
 				if (DUMP_ERRS || !p->do_read_term)
 					fprintf(stdout, "Error: syntax error, incomplete, line %d '%s'\n", p->line_nbr, p->save_line?p->save_line:"");
 
-				p->error_desc = "syntax_error_incomplete";
+				p->error_desc = "error_incomplete";
 				p->error = true;
 				break;
 			}
@@ -3130,7 +3132,7 @@ unsigned tokenize(parser *p, bool args, bool consing)
 				if (DUMP_ERRS || !p->do_read_term)
 					fprintf(stdout, "Error: syntax error, incomplete, line %d '%s'\n", p->line_nbr, p->save_line?p->save_line:"");
 
-				p->error_desc = "syntax_error_incomplete";
+				p->error_desc = "incomplete";
 				p->error = true;
 				break;
 			}
