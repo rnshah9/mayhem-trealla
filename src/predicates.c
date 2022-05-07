@@ -2457,15 +2457,11 @@ static USE_RESULT pl_status fn_iso_functor_3(query *q)
 		tmp.flags = 0;
 	}
 
-	if (!unify(q, p2, p2_ctx, &tmp, q->st.curr_frame))
+	if (unify(q, p2, p2_ctx, &tmp, q->st.curr_frame) != pl_success)
 		return pl_failure;
 
 	make_int(&tmp, p1->arity);
-
-	if (!unify(q, p3, p3_ctx, &tmp, q->st.curr_frame))
-		return pl_failure;
-
-	return pl_success;
+	return unify(q, p3, p3_ctx, &tmp, q->st.curr_frame);
 }
 
 static USE_RESULT pl_status fn_iso_current_rule_1(query *q)
@@ -4996,7 +4992,7 @@ static USE_RESULT pl_status fn_atom_lower_2(query *q)
 	while (len--) {
 		int ch = get_char_utf8(&src);
 		ch = towlower(ch);
-		dst += put_char_bare_utf8(dst, ch);
+		dst += put_char_utf8(dst, ch);
 	}
 
 	*dst = '\0';
@@ -5021,7 +5017,7 @@ static USE_RESULT pl_status fn_atom_upper_2(query *q)
 	while (len--) {
 		int ch = get_char_utf8(&src);
 		ch = towupper(ch);
-		dst += put_char_bare_utf8(dst, ch);
+		dst += put_char_utf8(dst, ch);
 	}
 
 	*dst = '\0';
@@ -5047,7 +5043,7 @@ static USE_RESULT pl_status fn_string_lower_2(query *q)
 	while (len--) {
 		int ch = get_char_utf8(&src);
 		ch = towlower(ch);
-		dst += put_char_bare_utf8(dst, ch);
+		dst += put_char_utf8(dst, ch);
 	}
 
 	*dst = '\0';
@@ -5072,7 +5068,7 @@ static USE_RESULT pl_status fn_string_upper_2(query *q)
 	while (len--) {
 		int ch = get_char_utf8(&src);
 		ch = towupper(ch);
-		dst += put_char_bare_utf8(dst, ch);
+		dst += put_char_utf8(dst, ch);
 	}
 
 	*dst = '\0';
