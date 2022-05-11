@@ -1652,16 +1652,32 @@ static USE_RESULT pl_status fn_iso_arg_3(query *q)
 	if ((arg_nbr == 0) || (arg_nbr > p2->arity))
 		return pl_failure;
 
-	cell *c = p2 + 1;
+	if (is_list(p2)) {
+		LIST_HANDLER(p2);
+
+		cell *c = LIST_HEAD(p2);
+		c = deref(q, c, p2_ctx);
+		pl_idx_t c_ctx = q->latest_ctx;
+
+		if (arg_nbr == 1)
+			return unify(q, c, c_ctx, p3, p3_ctx);
+
+		p2 = LIST_TAIL(p2);
+		p2 = deref(q, p2, p2_ctx);
+		p2_ctx = q->latest_ctx;
+		return unify(q, p2, p2_ctx, p3, p3_ctx);
+	}
+
+	p2 = p2 + 1;
 
 	for (int i = 1; i <= arg_nbr; i++) {
 		if (i == arg_nbr) {
-			c = deref(q, c, p2_ctx);
+			cell *c = deref(q, p2, p2_ctx);
 			pl_idx_t c_ctx = q->latest_ctx;
-			return unify(q, p3, p3_ctx, c, c_ctx);
+			return unify(q, c, c_ctx, p3, p3_ctx);
 		}
 
-		c += c->nbr_cells;
+		p2 += p2->nbr_cells;
 	}
 
 	return pl_success;

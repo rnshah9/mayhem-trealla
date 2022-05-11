@@ -1084,8 +1084,10 @@ static bool reduce(parser *p, pl_idx_t start_idx, bool last_op)
 			continue;
 		}
 
-		if (!p->consulting && 0)
-			printf("*** OP1 start=%u %s type=%u, specifier=%u, pri=%u, last_op=%d, is_op=%d\n", start_idx, GET_STR(p, c), c->tag, GET_OP(c), c->priority, last_op, IS_OP(c));
+#if 0
+		if (!p->consulting)
+			printf("*** OP1 start=%u '%s' type=%u, specifier=%u, pri=%u, last_op=%d, is_op=%d\n", start_idx, GET_STR(p, c), c->tag, GET_OP(c), c->priority, last_op, IS_OP(c));
+#endif
 
 		if ((i == start_idx) && (i == end_idx)) {
 			c->priority = 0;
@@ -1123,8 +1125,10 @@ static bool reduce(parser *p, pl_idx_t start_idx, bool last_op)
 			continue;
 		}
 
-		if (!p->consulting && 0)
-			printf("*** OP2 last=%u/start=%u %s type=%u, specifier=%u, pri=%u, last_op=%d, is_op=%d\n", last_idx, start_idx, GET_STR(p, c), c->tag, GET_OP(c), c->priority, last_op, IS_OP(c));
+#if 0
+		if (!p->consulting)
+			printf("*** OP2 last=%u/start=%u '%s' type=%u, specifier=%u, pri=%u, last_op=%d, is_op=%d\n", last_idx, start_idx, GET_STR(p, c), c->tag, GET_OP(c), c->priority, last_op, IS_OP(c));
+#endif
 
 		c->tag = TAG_LITERAL;
 		c->arity = 1;
@@ -1136,7 +1140,7 @@ static bool reduce(parser *p, pl_idx_t start_idx, bool last_op)
 
 			if (is_fx(rhs) && !rhs->arity && (rhs->priority == c->priority)) {
 				if (DUMP_ERRS || !p->do_read_term)
-					fprintf(stdout, "Error: operator clash, line %u\n", p->line_nbr);
+					fprintf(stdout, "Error: syntax error, operator clash, line %u\n", p->line_nbr);
 
 				p->error_desc = "operator_clash";
 				p->error = true;
@@ -1148,7 +1152,7 @@ static bool reduce(parser *p, pl_idx_t start_idx, bool last_op)
 			if ((((pl_idx_t)(rhs - p->cl->cells)) < end_idx)
 				&& is_xf(rhs) && (rhs->priority == c->priority)) {
 				if (DUMP_ERRS || !p->do_read_term)
-					fprintf(stdout, "Error: operator clash, line %u\n", p->line_nbr);
+					fprintf(stdout, "Error: syntax error, operator clash, line %u\n", p->line_nbr);
 
 				p->error_desc = "operator_clash";
 				p->error = true;
@@ -1163,7 +1167,7 @@ static bool reduce(parser *p, pl_idx_t start_idx, bool last_op)
 
 			if (off > end_idx) {
 				if (DUMP_ERRS || !p->do_read_term)
-					fprintf(stdout, "Error: missing operand to '%s', line %u, '%s'\n", GET_STR(p, c), p->line_nbr, p->save_line?p->save_line:"");
+					fprintf(stdout, "Error: syntax error, missing operand to '%s', line %u, '%s'\n", GET_STR(p, c), p->line_nbr, p->save_line?p->save_line:"");
 
 				p->error_desc = "operand_missing";
 				p->error = true;
@@ -1180,7 +1184,7 @@ static bool reduce(parser *p, pl_idx_t start_idx, bool last_op)
 
 		if (is_xf(rhs) && (rhs->priority == c->priority)) {
 			if (DUMP_ERRS || !p->do_read_term)
-					fprintf(stdout, "Error: operator clash, line %u\n", p->line_nbr);
+					fprintf(stdout, "Error: syntax error, operator clash, line %u\n", p->line_nbr);
 
 			p->error_desc = "operator_clash";
 			p->error = true;
@@ -1208,7 +1212,7 @@ static bool reduce(parser *p, pl_idx_t start_idx, bool last_op)
 
 		if (nolhs || (off > end_idx)) {
 			if (DUMP_ERRS || !p->do_read_term)
-				fprintf(stdout, "Error: missing operand to '%s', line %u, '%s'\n", GET_STR(p, c), p->line_nbr, p->save_line?p->save_line:"");
+				fprintf(stdout, "Error: syntax error, missing operand to '%s', line %u, '%s'\n", GET_STR(p, c), p->line_nbr, p->save_line?p->save_line:"");
 
 			p->error_desc = "operand_missing";
 			p->error = true;
@@ -1235,7 +1239,7 @@ static bool reduce(parser *p, pl_idx_t start_idx, bool last_op)
 				&& (is_xfx(next))
 				&& (next->priority == c->priority)) {
 				if (DUMP_ERRS || !p->do_read_term)
-					fprintf(stdout, "Error: operator clash, line %u\n", p->line_nbr);
+					fprintf(stdout, "Error: syntax error, operator clash, line %u\n", p->line_nbr);
 
 				p->error_desc = "operator_clash";
 				p->error = true;
@@ -2255,7 +2259,7 @@ bool get_token(parser *p, bool last_op, bool was_postfix)
 	p->v.flags = 0;
 	p->v.nbr_cells = 1;
 	p->quote_char = 0;
-	p->was_string = p->string = p->is_quoted = p->is_variable = p->is_op = false;
+	p->was_string = p->string = p->is_quoted = p->is_variable = p->is_op = p->symbol = false;
 
 	if (p->dq_consing && (*src == '"') && (src[1] == '"')) {
 		src++;
@@ -2373,7 +2377,7 @@ bool get_token(parser *p, bool last_op, bool was_postfix)
 
 		p->srcptr = (char*)src;
 		p->toklen = dst - p->token;
-		int ch = *src;
+		int ch = peek_char_utf8(src);
 
 		if (!check_space_before_function(p, ch, src))
 			return false;
@@ -2558,6 +2562,7 @@ bool get_token(parser *p, bool last_op, bool was_postfix)
 
 		p->srcptr = (char*)src;
 		p->toklen = dst - p->token;
+		int ch = peek_char_utf8(src);
 
 		if (!check_space_before_function(p, ch, src))
 			return false;
@@ -2604,7 +2609,7 @@ bool get_token(parser *p, bool last_op, bool was_postfix)
 			p->toklen = 2;
 			get_char_utf8(&src);
 			p->srcptr = (char*)src;
-			ch = peek_char_utf8(src);
+			int ch = peek_char_utf8(src);
 
 			if (!check_space_before_function(p, ch, src))
 				return false;
@@ -2623,6 +2628,8 @@ bool get_token(parser *p, bool last_op, bool was_postfix)
 		next_ch = peek_char_utf8(src);
 
 	// Symbols...
+
+	p->symbol = true;
 
 	if (is_matching_pair(ch, next_ch, ')','(') ||
 		is_matching_pair(ch, next_ch, ']','(') ||
@@ -2643,8 +2650,21 @@ bool get_token(parser *p, bool last_op, bool was_postfix)
 	if (was_space) {
 		dst += put_char_utf8(dst, ch);
 		p->toklen = dst - p->token;
-		p->is_op = search_op(p->m, p->token, NULL, false);
+		unsigned specifier;
+		p->is_op = search_op(p->m, p->token, &specifier, false);
+
+		//if (IS_INFIX(specifier) && last_op)
+		//	p->is_op = false;
+
 		p->srcptr = (char*)src;
+
+		if (strcmp(p->token, "(") && strcmp(p->token, "-") && strcmp(p->token, "+")) {
+			int ch = peek_char_utf8(src);
+
+			if (!check_space_before_function(p, ch, src))
+				return false;
+		}
+
 		return true;
 	}
 
@@ -2659,7 +2679,6 @@ bool get_token(parser *p, bool last_op, bool was_postfix)
 		}
 
 		dst += put_char_utf8(dst, ch);
-		*dst = '\0';
 
 		if (((ch < 256) && strchr(g_solo, ch)) || iswspace(ch))
 			break;
@@ -2732,7 +2751,7 @@ unsigned tokenize(parser *p, bool args, bool consing)
 
 #if 0
 		int ch = peek_char_utf8(p->token);
-		fprintf(stderr, "Debug: token '%s' (%d) line_nbr=%d, quoted=%d, tag=%u, op=%d, lastop=%d, string=%d\n", p->token, ch, p->line_nbr, p->quote_char, p->v.tag, p->is_op, last_op, p->string);
+		fprintf(stderr, "Debug: token '%s' (%d) line_nbr=%d, symbol=%d, quoted=%d, tag=%u, op=%d, lastop=%d, string=%d\n", p->token, ch, p->line_nbr, p->symbol, p->quote_char, p->v.tag, p->is_op, last_op, p->string);
 #endif
 
 		if (!p->quote_char && !strcmp(p->token, ".")
@@ -2761,7 +2780,7 @@ unsigned tokenize(parser *p, bool args, bool consing)
 			}
 
 			if (analyze(p, 0, last_op)) {
-				if (p->cl->cells->nbr_cells < (p->cl->cidx-1)) {
+				if (p->cl->cells->nbr_cells <= (p->cl->cidx-1)) {
 					if (DUMP_ERRS || !p->do_read_term)
 						printf("Error: syntax error, operator expected unfinished input '%s', line %u, '%s'\n", p->token, p->line_nbr, p->save_line?p->save_line:"");
 
@@ -2773,6 +2792,20 @@ unsigned tokenize(parser *p, bool args, bool consing)
 				term_to_body(p);
 
 				if (p->consulting && !p->skip) {
+					if (is_variable(p->cl->cells)) {
+						if (DUMP_ERRS || !p->do_read_term)
+							printf("Error: instantiation error, line %u, '%s'\n", p->line_nbr, p->save_line?p->save_line:"");
+
+						p->error_desc = "instnatiation_error";
+						p->error = true;
+					} else if (is_number(p->cl->cells)) {
+						if (DUMP_ERRS || !p->do_read_term)
+							printf("Error: type error, callable, line %u, '%s'\n", p->line_nbr, p->save_line?p->save_line:"");
+
+						p->error_desc = "instnatiation_error";
+						p->error = true;
+					}
+
 					xref_rule(p->m, p->cl, NULL);
 					term_expansion(p);
 					cell *p1 = p->cl->cells;
@@ -3154,13 +3187,6 @@ unsigned tokenize(parser *p, bool args, bool consing)
 			) {
 				specifier = 0;
 				priority = 0;
-			} else if (((nextch == ';') || (nextch == '*') || (nextch == '-')) && strcmp(p->token, "+")) {
-				if (DUMP_ERRS || !p->do_read_term)
-					fprintf(stdout, "Error: syntax error, incomplete, line %d '%s'\n", p->line_nbr, p->save_line?p->save_line:"");
-
-				p->error_desc = "incomplete";
-				p->error = true;
-				break;
 			}
 		}
 
