@@ -3826,6 +3826,9 @@ static void save_db(FILE *fp, query *q, int logging)
 				fprintf(fp, ",'%s')", tmpbuf);
 			}
 
+			if (q->last_thing_was_symbol)
+				fprintf(fp, " ");
+
 			fprintf(fp, ".\n");
 		}
 	}
@@ -5351,7 +5354,9 @@ static USE_RESULT pl_status fn_atomic_list_concat_3(query *q)
 		if (!is_atomic(h))
 			return throw_error(q, h, q->latest_ctx, "type_error", "atomic");
 
+		q->parens = true;
 		char *dst = print_term_to_strbuf(q, h, q->latest_ctx, 1);
+		q->parens = false;
 		ASTRING_strcat(pr, dst);
 		free(dst);
 
@@ -5360,7 +5365,9 @@ static USE_RESULT pl_status fn_atomic_list_concat_3(query *q)
 		p1_ctx = q->latest_ctx;
 
 		if (is_list(p1)) {
+			q->parens = true;
 			dst = print_term_to_strbuf(q, p2, p2_ctx, 1);
+			q->parens = false;
 			ASTRING_strcat(pr, dst);
 			free(dst);
 		}
