@@ -1,0 +1,6 @@
+project: rnshah9/mayhem-trealla
+target: tpl
+tests: null
+
+cmds:
+  - cmd: /repo/tpl
