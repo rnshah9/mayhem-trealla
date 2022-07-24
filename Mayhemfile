@@ -2,4 +2,4 @@ project: trealla
 target: tpl
 
 cmds:
-  - cmd: /repo/tpl
+  - cmd: /tpl
