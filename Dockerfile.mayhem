@@ -1,7 +1,7 @@
 FROM --platform=linux/amd64 ubuntu:20.04 as builder
 
 RUN apt-get update
-RUN DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential libreadline-dev xxd libssl-dev
+RUN DEBIAN_FRONTEND=noninteractive apt-get install -y build-essential libreadline-dev xxd libssl-dev libffi-dev
 
 COPY . /repo
 WORKDIR /repo
