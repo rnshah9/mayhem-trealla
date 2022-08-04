@@ -4,29 +4,77 @@ Trealla Prolog
 A compact, efficient Prolog interpreter with
 [ISO compliant](https://trealla-prolog.github.io/trealla/) aspirations.
 
+	MIT licensed
 	Integers are unbounded
 	Atoms are UTF-8 of unlimited length
 	The default double-quoted representation is *chars* list
 	Dynamic atoms are automatically garbage collected
 	Unlimited arity (system resources constrained)
 	Uses 1st & 2nd arg indexing
+	Atom garbage collection
 	DCGs
 	REPL with history
-	MIT licensed
-
+	Compiles in <1s with *tcc*, or ~5s with *gcc* and *clang*
+	Runs on Linux, FreeBSD and macOS
+	Foreign function interface (FFI) for calling out to user C code
+	Access SQLITE databases using builtin module (uses FFI)
 	Attributed variables with SICStus interface (*WIP*)
 	Rational trees aka. cyclic terms (*WIP*)
 	Logtalk compatible (*WIP*)
 
+
 Trealla is not WAM-based. It uses tree-walking, structure-sharing and
 deep-binding. Source is compiled to an AST that is interpreted at
 runtime.
+
+The name Trealla comes from the Liaden Universe books by Lee & Miller.
+It is also a nod to the Trealla region of Western Australia.
 
 
 Logo
 ====
 
 ![Trealla Logo: Trealla](trealla.png)
+
+
+Usage
+=====
+
+	tpl [options] [files] [-- args]
+
+where options can be:
+
+	-O0, --noopt       - no optimization
+	-f file            - load file (*~/.tplrc* not loaded)
+	-l file            - load file (*~/.tplrc* loaded)
+	file               - load file (*~/.tplrc* loaded)
+	-g goal            - query goal (only used once)
+	--library path     - alt to TPL_LIBRARY_PATH env variable
+	-t, --trace        - trace
+	-q, --quiet        - quiet mode (no banner)
+	-v, --version      - version
+	-h, --help         - help
+	-d, --daemonize    - daemonize
+	-w, --watchdog     - create watchdog
+	--consult          - consult from STDIN
+
+For example:
+
+	tpl -g test2,halt samples/sieve
+
+Invocation without any goal presents the REPL.
+
+The default path to the library is relative to the executable location.
+
+The file *~/.tplrc* is consulted on startup unless the *-f* option is present.
+
+When consulting, reconsulting and deconsulting files the *.pl* version
+of the filename is always preferred (if not specified) when looking for a
+file.
+
+To run the Pereira benchmark suite:
+
+	tpl -g "bench_peirera,halt" -f samples/peirera.pl
 
 
 A note on UTF-8
@@ -69,6 +117,7 @@ Trealla accepts as a variable any atom beginning with Unicode uppercase...
 ?-
 ```
 
+
 Building
 ========
 
@@ -77,16 +126,19 @@ Written in plain-old C.
 	git clone https://github.com/infradig/trealla.git
 	cd trealla
 
-On Debian+ systems you may need to install GNU readline & xxd
+On Debian+ systems you may need to install GNU readline, xxd & libffi
 
-	sudo apt install libreadline-dev xxd
+	sudo apt install libreadline-dev xxd libffi-dev
 
 Then...
 
 	make
 
-Other systems may vary. There are no other dependencies except OpenSSL.
-On Debian+ systems you may need to install OpenSSL:
+To build without libffi:
+
+	make NOFFI=1
+
+Other systems may vary. On Debian+ systems you may need to install OpenSSL:
 
 	sudo apt install libssl-dev
 
@@ -94,7 +146,7 @@ To build without OpenSSL:
 
 	make NOSSL=1
 
-To build with ISOCLINE (default is to use GNU readline):
+To build with the included ISOCLINE sources (default is to use GNU readline):
 
 	make ISOCLINE=1
 
@@ -102,23 +154,28 @@ Then...
 
 	make test
 
-A 'make debug' build compiles in <1s with *tcc* and about 5-6s with
-*clang* and *gcc*. Should build on any Unix-like system with a C99
-compiler. Has been tested on macOS, Linux, FreeBSD and Raspbian (32 &
-64-bit) systems.
-
 On *BSD* systems use *gmake* to build and do
 
 	pkg install editors/vim
 
 to get the *xxd* utility.
 
-For unbounded arithmetic uses a modified fork of the [imath](https://github.com/infradig/imath)
+For unbounded arithmetic Trealla uses a modified fork of the
+[imath](https://github.com/infradig/imath)
 library, which is partially included in the source. Note, unbounded
 integers (aka. bigints) are for arithmetic purposes only and will give a
-type_error when used inplaces not expected. The *imath* library has a bug
+type_error when used in places not expected. The *imath* library has a bug
 whereby printing large numbers becomes exponentially slower (100K+ digits)
 and will require a switch to *libtomath* at some point to remedy.
+
+
+Contributions
+=============
+
+Contributions are welcome. Trealla coding style is snake-case (like
+original K&R). I consider camelCase to be an anti-pattern, probably
+because i'm dyslexic and it takes me twice as long to read and 4 times
+as long to write.
 
 
 Cross-compile for Windows
@@ -127,50 +184,13 @@ Cross-compile for Windows
 To cross-compile on Linux and produce a Windows executable...
 
 	sudo apt-get install mingw-w64
-	make CC=x86_64-w64-mingw32-gcc NOSSL=1 ISOCLINE=1
+	make CC=x86_64-w64-mingw32-gcc NOSSL=1 NOFFI=1 ISOCLINE=1
 
 ```console
 $ file tpl.exe
 tpl.exe: PE32+ executable (console) x86-64, for MS Windows
 $ wine tpl.exe -g test5,halt -f samples/sieve.pl
 ```
-
-
-Usage
-=====
-
-	tpl [options] [files] [-- args]
-
-where options can be:
-
-	-O0, --noopt       - no optimization
-	-f file            - load file (*~/.tplrc* not loaded)
-	-l file            - load file (*~/.tplrc* loaded)
-	-g goal            - query goal (only used once)
-	--library path     - alt to TPL_LIBRARY_PATH env variable
-	-t, --trace        - trace
-	-q, --quiet        - quiet mode (no banner)
-	-v, --version      - version
-	-h, --help         - help
-	-d, --daemonize    - daemonize
-	-w, --watchdog     - create watchdog
-	--stats            - print stats
-	--consult          - consult from STDIN
-
-For example:
-
-	tpl -g test2,halt samples/sieve
-
-Invocation without any goal presents the REPL.
-
-The default path to the library is relative to the executable location.
-
-The file *~/.tplrc* is consulted on startup unless the *-f* option is present.
-
-When consulting, reconsulting and deconsulting files the *.pl* version
-of the filename is always preferred (if not specified) when looking for a
-file.
-
 
 Acknowledgements
 ================
@@ -246,6 +266,7 @@ Non-standard predicates
 	write_canonical_to_atom/3   # write_canonical_to_atom(?atom,?term,+list)
 	term_to_atom/2              # term_to_atom(?atom,?term)
 
+	setrand/1                   # set_seed(+integer) set random number seed
 	srandom/1                   # set_seed(+integer) set random number seed
 	set_seed/1                  # set_seed(+integer) set random number seed
 	get_seed/1                  # get_seed(-integer) get random number seed
@@ -284,7 +305,10 @@ Non-standard predicates
 	when/2						# auto-loaded from library(when)
 	dif/2						# auto-loaded from library(dif)
 
-	must_be/4                   # must_be(+rule,+type,+rule,+arg)
+	must_be/4                   # must_be(+term,+type,+goal,?arg)
+	can_be/4                    # can_be(+term,+type,+goal,?arg)
+	must_be/2                   # must_be(+type,+term)
+	can_be/2                    # can_be(+type,+term)
 	expand_term/2               # expand_term(+rule,-Term)
 	memberchk/2                 # memberchk(+rule,+list).
 	nonmember/2                 # \+ memberchk(+rule,+list)
@@ -322,6 +346,7 @@ Non-standard predicates
 	is_list_or_partial_list/1
 	is_stream/1
 	term_hash/2
+	term_hash/3					# ignores arg2 (options)
 	time/1
 	inf/0
 	nan/0
@@ -418,6 +443,7 @@ Non-standard predicates
 	getline/2                   # getline(+stream,-string)
 	getlines/1                  # getlines(-strings)
 	getlines/2                  # getlines(+stream,-strings)
+	read_line_to_codes/2	   	# removes terminator
 	read_line_to_string/2		# removes terminator
 	read_file_to_string/3
 	bread/3                     # bread(+stream,?len,-string)
@@ -519,7 +545,111 @@ many bytes, = 0 meaning return what is there (if non-blocking) or a variable
 meaning return all bytes until end end of file,
 
 
-Persistence					##EXPERIMENTAL##
+Foreign Function Interface (FFI)		##EXPERIMENTAL##
+================================
+
+Allows the loading of dynamic libraries and calling of foreign functions
+written in C from within Prolog...
+
+	'$dlopen'/3 			# '$dlopen(+name, +flag, -handle)
+
+These predicates register a foreign function as a builtin and use a
+wrapper to validate arg types at call/runtime...
+
+	'$register_function'/4		# '$ffi_reg'(+handle,+symbol,+types,+ret_type)
+	'$register_predicate'/4		# '$ffi_reg'(+handle,+symbol,+types,+ret_type)
+
+The allowed types are *int8*, *int16*, *int32*, *int64*, *uint8*,
+*uint16*, *uint32*, *uint64*, *fp32*, *fp64*, *cstr*, *const_cstr*
+and *ptr* (for arbitrary pointers/handles).
+
+Assuming the following C-code in *samples/foo.c*:
+
+```c
+	double foo(double x, int64_t y)
+	{
+		return pow(x, (double)y);
+	}
+
+	int bar(double x, int64_t y, double *result)
+	{
+		*result = pow(x, (double)y);
+		return 0;
+	}
+
+	char *baz(const char *x, const char *y)
+	{
+		char *s = malloc(strlen(x) + strlen(y) + 1);
+		strcpy(s, x);
+		strcat(s, y);
+		return s;
+	}
+```
+
+```console
+	$ gcc -fPIC -c foo.c
+	$ gcc -shared -o libfoo.so foo.o
+```
+
+Register a builtin function...
+
+```prolog
+	?- '$dlopen'('samples/libfoo.so', 0, H),
+		'$register_function'(H, foo, [fp64, int64], fp64).
+	   H = 94051868794416.
+	?- R is foo(2.0, 3).
+	   R = 8.0.
+	?- R is foo(abc,3).
+	   error(type_error(float,abc),foo/2).
+```
+
+Register a builtin predicate...
+
+```prolog
+	?- '$dlopen'('samples/libfoo.so', 0, H),
+		'$register_predicate'(H, bar, [fp64, int64, -fp64], int64),
+		'$register_predicate'(H, baz, [cstr, cstr], cstr),
+	   H = 94051868794416.
+	?- bar(2.0, 3, X, Return).
+	   X = 8.0, Return = 0.
+	?- baz('abc', '123', Return).
+	   Return = abc123.
+```
+
+Note: the foreign function return value is passed as an extra argument
+to the predicate call.
+
+There is an example using SQLITE. First make sure SQLITE is installed
+on your system, for example...
+
+```console
+	$ sudo apt install sqlite3
+```
+
+Then, given the code in *samples/sqlite3.pl*...
+
+```prolog
+	:- use_module(library(sqlite3)).
+
+	run :-
+		test('samples/sqlite3.db', 'SELECT * FROM company').
+
+	test(Database, Query) :-
+		flag('SQLITE_OK', SQLITE_OK),
+		sqlite3_open(Database, Connection, Ret), Ret =:= SQLITE_OK,
+		bagof(Row, sqlite3_query(Connection, Query, Row, _), Results),
+		writeq(Results), nl.
+```
+
+Run...
+
+```console
+	$ tpl -g run,halt samples/sqlite3.pl
+[[1,'Paul',32,'California',20000.0],[2,'Allen',25,'Texas',15000.0],[3,'Teddy',23,'Norway',20000.0],[4,'Mark',25,'Rich-Mond ',65000.0],[5,'David',27,'Texas',85000.0],[6,'Kim',22,'South-Hall',45000.0]]
+```
+
+
+Persistence						##EXPERIMENTAL##
 ===========
 
 Declaring something dynamic with the *persist* directive:
@@ -531,7 +661,7 @@ causes that clause to be saved to a per-module database on update
 *dynamic/2*?
 
 
-Concurrency					##EXPERIMENTAL##
+Concurrency						##EXPERIMENTAL##
 ===========
 
 Trealla is single-threaded internally but cooperative multitasking is
@@ -539,30 +669,12 @@ available in the form of light-weight coroutines that run until they
 yield control, either explicitly or implicitly (when waiting on input
 or a timer)...
 
-	fork/0                  # parent fails, child continues
 	task/[1-n]	            # concurrent form of call/1-n
-	yield/0                 # voluntarily yield control
-	wait/0                  # parent should wait for children to finish
-	await/0                 # parent should wait for a message
-	send/1                  # append rule to parent queue
-	recv/1                  # pop rule from queue
 	tasklist/[2-8]          # concurrent form of maplist/1-n
 
-Note: *send/1*, *sleep/1* and *delay/1* do implied yields. As does *getline/2*,
-*bread/3*, *bwrite/2* and *accept/2*.
-
-Note: *task/n* acts as if defined as:
-
-```prolog
-	task(G) :- fork, call(G).
-	task(G,P1) :- fork, call(G,P1).
-	task(G,P1,P2) :- fork, call(G,P1,P2).
-```
-	...
-
-In practice *task* calls a special version of *fork/0* that limits
-the number of such concurrent tasks. Excess tasks will be scheduled as
-tasks finish.
+Note: *tasklist* limits the number of concurrent tasks to a small
+pool (4?) of tasks active at one time. New tasks are scheduled as prior
+ones complete.
 
 An example:
 
@@ -580,22 +692,6 @@ test54 :-
 	maplist(geturl,L),
 	writeln('Finished').
 
-% Fetch each URL in list concurrently (method 1)...
-
-test55 :-
-	L = ['www.google.com','www.bing.com','www.duckduckgo.com'],
-	maplist(task(geturl),L),
-	wait,
-	writeln('Finished').
-
-% Fetch each URL in list concurrently (method 2)...
-
-test56 :-
-	L = ['www.google.com','www.bing.com','www.duckduckgo.com'],
-	tasklist(geturl,L),
-	writeln('Finished').
-```
-
 ```console
 $ tpl samples/test -g "time(test54),halt"
 Job [www.google.com] 200 ==> www.google.com done
@@ -604,12 +700,13 @@ Job [www.duckduckgo.com] 200 ==> https://duckduckgo.com done
 Finished
 Time elapsed 0.663 secs
 
-$ tpl samples/test -g "time(test55),halt"
-Job [www.duckduckgo.com] 200 ==> https://duckduckgo.com done
-Job [www.bing.com] 200 ==> www.bing.com done
-Job [www.google.com] 200 ==> www.google.com done
-Finished
-Time elapsed 0.331 secs
+% Fetch each URL in list concurrently...
+
+test56 :-
+	L = ['www.google.com','www.bing.com','www.duckduckgo.com'],
+	tasklist(geturl,L),
+	writeln('Finished').
+```
 
 $ tpl samples/test -g "time(test56),halt"
 Job [www.duckduckgo.com] 200 ==> https://duckduckgo.com done

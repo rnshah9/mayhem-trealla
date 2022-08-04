@@ -1,15 +1,20 @@
+#include <ctype.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <ctype.h>
 #include <sys/stat.h>
 
-#include "internal.h"
-#include "parser.h"
 #include "module.h"
+#include "parser.h"
 #include "prolog.h"
 #include "query.h"
 #include "utf8.h"
+
+struct loaded_file_ {
+	loaded_file *next;
+	char *filename;
+	bool is_loaded:1;
+};
 
 static const op_table g_ops[] =
 {
@@ -28,7 +33,8 @@ static const op_table g_ops[] =
 	//{"multifile", OP_FX, 1150},
 	//{"attribute", OP_FX, 1150},
 	//{"op", OP_FX, 1150},
-	//{"dynamic", OP_FX, 1150},
+	{"table", OP_FX, 1150},
+	{"dynamic", OP_FX, 1150},
 	//{"persist", OP_FX, 1150},
 	//{"initialization", OP_FX, 1150},
 	//{"set_prolog_flag", OP_FX, 1150},
@@ -84,7 +90,7 @@ static const op_table g_ops[] =
 
 static const char *set_loaded(module *m, const char *filename)
 {
-	struct loaded_file *ptr = m->loaded_files;
+	loaded_file *ptr = m->loaded_files;
 
 	while (ptr) {
 		if (!strcmp(ptr->filename, filename)) {
@@ -105,7 +111,7 @@ static const char *set_loaded(module *m, const char *filename)
 
 static const char *set_known(module *m, const char *filename)
 {
-	struct loaded_file *ptr = m->loaded_files;
+	loaded_file *ptr = m->loaded_files;
 
 	while (ptr) {
 		if (!strcmp(ptr->filename, filename))
@@ -124,7 +130,7 @@ static const char *set_known(module *m, const char *filename)
 
 static void set_unloaded(module *m, const char *filename)
 {
-	struct loaded_file *ptr = m->loaded_files;
+	loaded_file *ptr = m->loaded_files;
 
 	while (ptr) {
 		if (!strcmp(ptr->filename, filename)) {
@@ -138,7 +144,7 @@ static void set_unloaded(module *m, const char *filename)
 
 static bool is_loaded(const module *m, const char *filename)
 {
-	struct loaded_file *ptr = m->loaded_files;
+	loaded_file *ptr = m->loaded_files;
 
 	while (ptr) {
 		if (ptr->is_loaded && !strcmp(ptr->filename, filename))
@@ -152,10 +158,10 @@ static bool is_loaded(const module *m, const char *filename)
 
 static void clear_loaded(const module *m)
 {
-	struct loaded_file *ptr = m->loaded_files;
+	loaded_file *ptr = m->loaded_files;
 
 	while (ptr) {
-		struct loaded_file *save = ptr;
+		loaded_file *save = ptr;
 		ptr = ptr->next;
 		free(save->filename);
 		free(save);
@@ -167,14 +173,14 @@ predicate *create_predicate(module *m, cell *c)
 	bool found, function;
 
 	if (strcmp(m->name, "format")) {
-		if (get_builtin(m->pl, GET_STR(m, c), c->arity, &found, &function), found && !function) {
-			fprintf(stdout, "Error: permission error modifying %s/%u\n", GET_STR(m, c), c->arity);
+		if (get_builtin(m->pl, C_STR(m, c), c->arity, &found, &function), found && !function) {
+			fprintf(stdout, "Error: permission error modifying %s/%u\n", C_STR(m, c), c->arity);
 			return NULL;
 		}
 	}
 
 	predicate *pr = calloc(1, sizeof(predicate));
-	ensure(pr);
+	check_error(pr);
 	pr->prev = m->tail;
 
 	if (m->tail)
@@ -187,62 +193,47 @@ predicate *create_predicate(module *m, cell *c)
 
 	pr->m = m;
 	pr->key = *c;
-	pr->key.tag = TAG_LITERAL;
+	pr->key.tag = TAG_INTERNED;
 	pr->key.nbr_cells = 1;
 	pr->is_noindex = m->pl->noindex || !pr->key.arity;
 
-	//printf("*** create %s ==> %s/%u\n", m->filename, GET_STR(m, &pr->key), pr->key.arity);
+	//printf("*** create %s ==> %s/%u\n", m->filename, C_STR(m, &pr->key), pr->key.arity);
 
-	if (GET_STR(m, c)[0] == '$')
-		pr->is_noindex = true;
+	//if (C_STR(m, c)[0] == '$')
+	//	pr->is_noindex = true;
 
-	m_app(m->index, &pr->key, pr);
+	map_app(m->index, &pr->key, pr);
 	return pr;
-}
-
-bool add_to_dirty_list(module *m, db_entry *dbe)
-{
-	if (!retract_from_db(m, dbe))
-		return false;
-
-	predicate *pr = dbe->owner;
-	dbe->dirty = pr->dirty_list;
-	pr->dirty_list = dbe;
-	return true;
 }
 
 static void destroy_predicate(module *m, predicate *pr)
 {
-	m_del(m->index, &pr->key);
+#if 0
+	if (pr->cnt != 0) {
+		printf("*** Warning: unreleased (%u) predicate '%s'/%u\n",
+		(unsigned)pr->cnt, C_STR(m, &pr->key), pr->key.arity);
+	}
+#endif
+
+	map_del(m->index, &pr->key);
 
 	for (db_entry *dbe = pr->head; dbe;) {
 		db_entry *save = dbe->next;
-
-		if (!dbe->cl.ugen_erased) {
-			clear_rule(&dbe->cl);
-			free(dbe);
-		}
-
-		dbe = save;
-	}
-
-	for (db_entry *dbe = pr->dirty_list; dbe;) {
-		db_entry *save = dbe->dirty;
 		clear_rule(&dbe->cl);
 		free(dbe);
 		dbe = save;
 	}
 
-	m_destroy(pr->idx_save);
-	m_destroy(pr->idx);
+	map_destroy(pr->idx2);
+	map_destroy(pr->idx);
 	free(pr);
 }
 
-static int predicate_cmpkey(const void *ptr1, const void *ptr2, const void *param)
+static int predicate_cmpkey(const void *ptr1, const void *ptr2, const void *param, void *l)
 {
+	const module *m = (const module*)param;
 	const cell *p1 = (const cell*)ptr1;
 	const cell *p2 = (const cell*)ptr2;
-	const module *m = (const module*)param;
 
 	if (p1->arity < p2->arity)
 		return -1;
@@ -256,22 +247,22 @@ static int predicate_cmpkey(const void *ptr1, const void *ptr2, const void *para
 	return strcmp(m->pl->pool+p1->val_off, m->pl->pool+p2->val_off);
 }
 
-int index_cmpkey_(const void *ptr1, const void *ptr2, const void *param, int depth)
+static int index_cmpkey_(const void *ptr1, const void *ptr2, const void *param, void *l, unsigned depth)
 {
+	const module *m = (const module*)param;
 	const cell *p1 = (const cell*)ptr1;
 	const cell *p2 = (const cell*)ptr2;
-	const module *m = (const module*)param;
 
 	if (is_smallint(p1)) {
-		if (is_bigint(p2)) {
-			return -mp_int_compare_value(&p2->val_bigint->ival, p1->val_int);
-		} if (is_smallint(p2)) {
+		if (is_smallint(p2)) {
 			if (get_smallint(p1) < get_smallint(p2))
 				return -1;
 			else if (get_smallint(p1) > get_smallint(p2))
 				return 1;
 			else
 				return 0;
+		} else if (is_bigint(p2)) {
+			return -mp_int_compare_value(&p2->val_bigint->ival, p1->val_int);
 		} else if (!is_variable(p2))
 			return -1;
 	} else if (is_bigint(p1)) {
@@ -281,11 +272,11 @@ int index_cmpkey_(const void *ptr1, const void *ptr2, const void *param, int dep
 			return mp_int_compare_value(&p1->val_bigint->ival, p2->val_int);
 		} else if (!is_variable(p2))
 			return -1;
-	} else if (is_real(p1)) {
-		if (is_real(p2)) {
-			if (get_real(p1) < get_real(p2))
+	} else if (is_float(p1)) {
+		if (is_float(p2)) {
+			if (get_float(p1) < get_float(p2))
 				return -1;
-			else if (get_real(p1) > get_real(p2))
+			else if (get_float(p1) > get_float(p2))
 				return 1;
 			else
 				return 0;
@@ -293,21 +284,21 @@ int index_cmpkey_(const void *ptr1, const void *ptr2, const void *param, int dep
 			return 1;
 		else if (!is_variable(p2))
 			return -1;
-	} else if (is_literal(p1) && !p1->arity) {
-		if (is_literal(p2) && !p2->arity) {
+	} else if (is_interned(p1) && !p1->arity) {
+		if (is_interned(p2) && !p2->arity) {
 			if (p1->val_off == p2->val_off)
 				return 0;
 
-			return strcmp(GET_STR(m, p1), GET_STR(m, p2));
+			return strcmp(C_STR(m, p1), C_STR(m, p2));
 		} else if (is_atom(p2))
-			return strcmp(GET_STR(m, p1), GET_STR(m, p2));
+			return strcmp(C_STR(m, p1), C_STR(m, p2));
 		else if (is_number(p2))
 			return 1;
 		else if (!is_variable(p2))
 			return -1;
 	} else if (is_atom(p1)) {
 		if (is_atom(p2))
-			return strcmp(GET_STR(m, p1), GET_STR(m, p2));
+			return strcmp(C_STR(m, p1), C_STR(m, p2));
 		else if (is_number(p2))
 			return 1;
 		else if (!is_variable(p2))
@@ -321,16 +312,26 @@ int index_cmpkey_(const void *ptr1, const void *ptr2, const void *param, int dep
 				return 1;
 
 			if (p1->val_off != p2->val_off)
-				return strcmp(GET_STR(m, p1), GET_STR(m, p2));
+				return strcmp(C_STR(m, p1), C_STR(m, p2));
 
 			int arity = p1->arity;
 			p1++; p2++;
 
 			while (arity--) {
-				int i = index_cmpkey_(p1, p2, param, depth+1);
+				if (!depth && (is_variable(p1) || is_variable(p2))) {
+					if (map_is_find(l))
+						break;
 
-				if (i != 0)
-					return i;
+					map_wild_card(l);
+					p1 += p1->nbr_cells;
+					p2 += p2->nbr_cells;
+					continue;
+				}
+
+				int ok = index_cmpkey_(p1, p2, param, l, depth+1);
+
+				if (ok != 0)
+					return ok;
 
 				p1 += p1->nbr_cells;
 				p2 += p2->nbr_cells;
@@ -344,9 +345,9 @@ int index_cmpkey_(const void *ptr1, const void *ptr2, const void *param, int dep
 	return 0;
 }
 
-int index_cmpkey(const void *ptr1, const void *ptr2, const void *param)
+int index_cmpkey(const void *ptr1, const void *ptr2, const void *param, void *l)
 {
-	return index_cmpkey_(ptr1, ptr2, param, 0);
+	return index_cmpkey_(ptr1, ptr2, param, l, 0);
 }
 
 db_entry *find_in_db(module *m, uuid *ref)
@@ -387,7 +388,7 @@ db_entry *erase_from_db(module *m, uuid *ref)
 void set_discontiguous_in_db(module *m, const char *name, unsigned arity)
 {
 	cell tmp = (cell){0};
-	tmp.tag = TAG_LITERAL;
+	tmp.tag = TAG_INTERNED;
 	tmp.val_off = index_from_pool(m->pl, name);
 	ensure(tmp.val_off != ERR_IDX);
 	tmp.arity = arity;
@@ -404,7 +405,7 @@ void set_discontiguous_in_db(module *m, const char *name, unsigned arity)
 void set_multifile_in_db(module *m, const char *name, pl_idx_t arity)
 {
 	cell tmp = (cell){0};
-	tmp.tag = TAG_LITERAL;
+	tmp.tag = TAG_INTERNED;
 	tmp.val_off = index_from_pool(m->pl, name);
 	ensure(tmp.val_off != ERR_IDX);
 	tmp.arity = arity;
@@ -418,10 +419,27 @@ void set_multifile_in_db(module *m, const char *name, pl_idx_t arity)
 		m->error = true;
 }
 
+void set_table_in_db(module *m, const char *name, unsigned arity)
+{
+	cell tmp = (cell){0};
+	tmp.tag = TAG_INTERNED;
+	tmp.val_off = index_from_pool(m->pl, name);
+	ensure(tmp.val_off != ERR_IDX);
+	tmp.arity = arity;
+	predicate *pr = find_predicate(m, &tmp);
+	if (!pr) pr = create_predicate(m, &tmp);
+
+	if (pr) {
+		push_property(m, name, arity, "tabled");
+		pr->is_tabled = true;
+	} else
+		m->error = true;
+}
+
 void set_dynamic_in_db(module *m, const char *name, unsigned arity)
 {
 	cell tmp = (cell){0};
-	tmp.tag = TAG_LITERAL;
+	tmp.tag = TAG_INTERNED;
 	tmp.val_off = index_from_pool(m->pl, name);
 	ensure(tmp.val_off != ERR_IDX);
 	tmp.arity = arity;
@@ -431,16 +449,17 @@ void set_dynamic_in_db(module *m, const char *name, unsigned arity)
 	if (pr) {
 		push_property(m, name, arity, "dynamic");
 		pr->is_dynamic = true;
+		pr->is_static = false;
 	} else
 		m->error = true;
 }
 
 void set_meta_predicate_in_db(module *m, cell *c)
 {
-	const char *name = GET_STR(m, c);
+	const char *name = C_STR(m, c);
 	unsigned arity = c->arity;
 	cell tmp = (cell){0};
-	tmp.tag = TAG_LITERAL;
+	tmp.tag = TAG_INTERNED;
 	tmp.val_off = index_from_pool(m->pl, name);
 	ensure(tmp.val_off != ERR_IDX);
 	tmp.arity = arity;
@@ -454,8 +473,8 @@ void set_meta_predicate_in_db(module *m, cell *c)
 		char *dst = print_canonical_to_strbuf(&q, c, 0, 0);
 		char tmpbuf[1024];
 		snprintf(tmpbuf, sizeof(tmpbuf), "meta_predicate(%s)", dst);
-		push_property(m, name, arity, tmpbuf);
 		free(dst);
+		push_property(m, name, arity, tmpbuf);
 		pr->is_meta_predicate = true;
 	} else
 		m->error = true;
@@ -464,7 +483,7 @@ void set_meta_predicate_in_db(module *m, cell *c)
 void set_persist_in_db(module *m, const char *name, unsigned arity)
 {
 	cell tmp = (cell){0};
-	tmp.tag = TAG_LITERAL;
+	tmp.tag = TAG_INTERNED;
 	tmp.val_off = index_from_pool(m->pl, name);
 	ensure(tmp.val_off == ERR_IDX);
 	tmp.arity = arity;
@@ -475,6 +494,7 @@ void set_persist_in_db(module *m, const char *name, unsigned arity)
 		push_property(m, name, arity, "dynamic");
 		push_property(m, name, arity, "persist");
 		pr->is_dynamic = true;
+		pr->is_static = false;
 		pr->is_persist = true;
 		m->use_persist = true;
 	} else
@@ -491,10 +511,10 @@ static bool is_check_directive(const cell *c)
 
 void convert_to_literal(module *m, cell *c)
 {
-	char *src = DUP_SLICE(m, c);
+	char *src = DUP_STR(m, c);
 	pl_idx_t off = index_from_pool(m->pl, src);
 	unshare_cell(c);
-	c->tag = TAG_LITERAL;
+	c->tag = TAG_INTERNED;
 	c->val_off = off;
 	c->match = NULL;
 	c->flags = 0;
@@ -504,32 +524,33 @@ void convert_to_literal(module *m, cell *c)
 predicate *find_predicate(module *m, cell *c)
 {
 	cell tmp = *c;
-	tmp.tag = TAG_LITERAL;
+	tmp.tag = TAG_INTERNED;
 	tmp.flags = 0;
 	tmp.nbr_cells = 1;
 
 	if (is_cstring(c)) {
-		tmp.val_off = index_from_pool(m->pl, GET_STR(m, c));
+		tmp.val_off = index_from_pool(m->pl, C_STR(m, c));
 	}
 
-	miter *iter = m_find_key(m->index, &tmp);
+	miter *iter = map_find_key(m->index, &tmp);
 	predicate *pr = NULL;
 
-	while (m_next_key(iter, (void*)&pr)) {
+	while (map_next_key(iter, (void*)&pr)) {
 		if (pr->is_abolished)
 			continue;
 
-		m_done(iter);
+		map_done(iter);
 		return pr;
 	}
 
+	map_done(iter);
 	return NULL;
 }
 
 predicate *find_functor(module *m, const char *name, unsigned arity)
 {
 	cell tmp = (cell){0};
-	tmp.tag = TAG_LITERAL;
+	tmp.tag = TAG_INTERNED;
 	tmp.val_off = index_from_pool(m->pl, name);
 	tmp.arity = arity;
 	return find_predicate(m, &tmp);
@@ -580,10 +601,10 @@ static const char *dump_key(const void *k, const void *v, const void *p)
 
 bool set_op(module *m, const char *name, unsigned specifier, unsigned priority)
 {
-	miter *iter = m_find_key(m->ops, name);
+	miter *iter = map_find_key(m->ops, name);
 	op_table *ptr;
 
-	while (m_next_key(iter, (void**)&ptr)) {
+	while (map_next_key(iter, (void**)&ptr)) {
 		if (IS_INFIX(ptr->specifier) != IS_INFIX(specifier))
 			continue;
 
@@ -591,20 +612,21 @@ bool set_op(module *m, const char *name, unsigned specifier, unsigned priority)
 			ptr->specifier = 0;
 			ptr->priority = 0;
 			m->loaded_ops = false;
-			m_done(iter);
+			map_done(iter);
 			return true;
 		}
 
 		ptr->priority = priority;
 		ptr->specifier = specifier;
 		m->loaded_ops = false;
-		m_done(iter);
+		map_done(iter);
 		return true;
 	}
 
-	iter = m_find_key(m->defops, name);
+	map_done(iter);
+	iter = map_find_key(m->defops, name);
 
-	while (m_next_key(iter, (void**)&ptr)) {
+	while (map_next_key(iter, (void**)&ptr)) {
 		if (IS_INFIX(ptr->specifier) != IS_INFIX(specifier))
 			continue;
 
@@ -612,24 +634,25 @@ bool set_op(module *m, const char *name, unsigned specifier, unsigned priority)
 			ptr->specifier = 0;
 			ptr->priority = 0;
 			m->loaded_ops = false;
-			m_done(iter);
+			map_done(iter);
 			return true;
 		}
 
 		ptr->priority = priority;
 		ptr->specifier = specifier;
 		m->loaded_ops = false;
-		m_done(iter);
+		map_done(iter);
 		return true;
 	}
 
+	map_done(iter);
 	op_table *tmp = malloc(sizeof(op_table));
 	tmp->name = set_known(m, name);
 	tmp->priority = priority;
 	tmp->specifier = specifier;
 	m->loaded_ops = false;
 	m->user_ops = true;
-	m_app(m->ops, tmp->name, tmp);
+	map_app(m->ops, tmp->name, tmp);
 
 #if DUMP_KEYS
 	sl_dump(m->ops, dump_key, m);
@@ -641,33 +664,33 @@ bool set_op(module *m, const char *name, unsigned specifier, unsigned priority)
 
 static unsigned find_op_internal(module *m, const char *name, unsigned specifier)
 {
-	miter *iter;
 	op_table *ptr;
+	miter *iter = map_find_key(m->ops, name);
 
-	iter = m_find_key(m->ops, name);
-
-	while (m_next_key(iter, (void**)&ptr)) {
+	while (map_next_key(iter, (void**)&ptr)) {
 		if (!ptr->priority)
 			continue;
 
 		if (ptr->specifier == specifier) {
-			m_done(iter);
+			map_done(iter);
 			return ptr->priority;
 		}
 	}
 
-	iter = m_find_key(m->defops, name);
+	map_done(iter);
+	iter = map_find_key(m->defops, name);
 
-	while (m_next_key(iter, (void**)&ptr)) {
+	while (map_next_key(iter, (void**)&ptr)) {
 		if (!ptr->priority)
 			continue;
 
 		if (ptr->specifier == specifier) {
-			m_done(iter);
+			map_done(iter);
 			return ptr->priority;
 		}
 	}
 
+	map_done(iter);
 	return 0;
 }
 
@@ -695,12 +718,10 @@ unsigned find_op(module *m, const char *name, unsigned specifier)
 
 static unsigned search_op_internal(module *m, const char *name, unsigned *specifier, bool hint_prefix)
 {
-	miter *iter;
 	op_table *ptr;
+	miter *iter = map_find_key(m->defops, name);
 
-	iter = m_find_key(m->defops, name);
-
-	while (m_next_key(iter, (void**)&ptr)) {
+	while (map_next_key(iter, (void**)&ptr)) {
 		if (!ptr->priority)
 			continue;
 
@@ -712,13 +733,14 @@ static unsigned search_op_internal(module *m, const char *name, unsigned *specif
 
 		if (specifier) *specifier = ptr->specifier;
 		unsigned n = ptr->priority;
-		m_done(iter);
+		map_done(iter);
 		return n;
 	}
 
-	iter = m_find_key(m->ops, name);
+	map_done(iter);
+	iter = map_find_key(m->ops, name);
 
-	while (m_next_key(iter, (void**)&ptr)) {
+	while (map_next_key(iter, (void**)&ptr)) {
 		if (!ptr->priority)
 			continue;
 
@@ -730,13 +752,14 @@ static unsigned search_op_internal(module *m, const char *name, unsigned *specif
 
 		if (specifier) *specifier = ptr->specifier;
 		unsigned n = ptr->priority;
-		m_done(iter);
+		map_done(iter);
 		return n;
 	}
 
-	iter = m_find_key(m->defops, name);
+	map_done(iter);
+	iter = map_find_key(m->defops, name);
 
-	while (m_next_key(iter, (void**)&ptr)) {
+	while (map_next_key(iter, (void**)&ptr)) {
 		if (!ptr->priority)
 			continue;
 
@@ -748,13 +771,14 @@ static unsigned search_op_internal(module *m, const char *name, unsigned *specif
 
 		if (specifier) *specifier = ptr->specifier;
 		unsigned n = ptr->priority;
-		m_done(iter);
+		map_done(iter);
 		return n;
 	}
 
-	iter = m_find_key(m->ops, name);
+	map_done(iter);
+	iter = map_find_key(m->ops, name);
 
-	while (m_next_key(iter, (void**)&ptr)) {
+	while (map_next_key(iter, (void**)&ptr)) {
 		if (!ptr->priority)
 			continue;
 
@@ -766,9 +790,11 @@ static unsigned search_op_internal(module *m, const char *name, unsigned *specif
 
 		if (specifier) *specifier = ptr->specifier;
 		unsigned n = ptr->priority;
-		m_done(iter);
+		map_done(iter);
 		return n;
 	}
+
+	map_done(iter);
 
 	if (hint_prefix)
 		return search_op_internal(m, name, specifier, false);
@@ -812,14 +838,43 @@ unsigned search_op(module *m, const char *name, unsigned *specifier, bool hint_p
 	return 0;
 }
 
-static void check_rule(module *m, db_entry *dbe)
+static bool check_multifile(module *m, predicate *pr, db_entry *dbe)
 {
-	predicate *pr = dbe->owner;
-	clause *r = &dbe->cl;
-	bool matched = false, me = false;
+	if (pr->head && !pr->is_multifile && !pr->is_dynamic
+		&& (C_STR(m, &pr->key)[0] != '$')) {
+		if (dbe->filename != pr->head->filename) {
+			for (db_entry *dbe = pr->head; dbe; dbe = dbe->next) {
+				add_to_dirty_list(dbe);
+				pr->is_processed = false;
+			}
+
+			if (dbe->owner->cnt)
+				fprintf(stderr, "Warning: overwriting %s/%u\n", C_STR(m, &pr->key), pr->key.arity);
+
+			map_destroy(pr->idx2);
+			map_destroy(pr->idx);
+			pr->idx2 = pr->idx = NULL;
+			pr->head = pr->tail = NULL;
+			dbe->owner->cnt = 0;
+			return false;
+		}
+	}
+
+	return true;
+}
+
+static void check_rule(module *m, db_entry *dbe_orig)
+{
+	predicate *pr = dbe_orig->owner;
+	clause *cl = &dbe_orig->cl;
+	bool matched = false;
 	bool p1_matched = false, p2_matched = false, p3_matched = false;
-	cell *head = get_head(r->cells);
+	cell *head = get_head(cl->cells);
 	cell *p1 = head + 1, *p2 = NULL, *p3 = NULL;
+	cl->arg1_is_unique = false;
+	cl->arg2_is_unique = false;
+	cl->arg3_is_unique = false;
+	cl->is_unique = false;
 
 	if (pr->key.arity > 1)
 		p2 = p1 + p1->nbr_cells;
@@ -827,16 +882,9 @@ static void check_rule(module *m, db_entry *dbe)
 	if (pr->key.arity > 2)
 		p3 = p2 + p2->nbr_cells;
 
-	for (db_entry *dbe = pr->head; dbe; dbe = dbe->next) {
+	for (db_entry *dbe = dbe_orig->next; dbe; dbe = dbe->next) {
 		if (dbe->cl.ugen_erased)
 			continue;
-
-		if (!me) {
-			if (&dbe->cl == r)
-				me = true;
-
-			continue;
-		}
 
 		cell *head2 = get_head(dbe->cl.cells);
 		cell *h21 = head2 + 1, *h22 = NULL, *h23 = NULL;
@@ -847,39 +895,47 @@ static void check_rule(module *m, db_entry *dbe)
 		if (pr->key.arity > 2)
 			h23 = h22 + h22->nbr_cells;
 
-		if (!index_cmpkey(p1, h21, m))
+		if (!index_cmpkey(p1, h21, m, NULL))
 			p1_matched = true;
 
 		if (pr->key.arity > 1) {
-			if (!index_cmpkey(p2, h22, m))
+			if (!index_cmpkey(p2, h22, m, NULL))
 				p2_matched = true;
 		}
 
 		if (pr->key.arity > 2) {
-			if (!index_cmpkey(p3, h23, m))
+			if (!index_cmpkey(p3, h23, m, NULL))
 				p3_matched = true;
 		}
 
-		if (!index_cmpkey(head, head2, m)) {
+		if (!index_cmpkey(head, head2, m, NULL)) {
 			matched = true;
-			//break;
+			break;
 		}
 	}
 
-	if (!matched) {
-		r->is_unique = true;
-	}
+	if (!matched)
+		cl->is_unique = true;
 
-	if (!p1_matched /*&& r->is_unique*/) {
-		r->arg1_is_unique = true;
-	}
+	if (!p1_matched && cl->is_unique)
+		cl->arg1_is_unique = true;
 
-	if (!p2_matched /*&& r->is_unique*/) {
-		r->arg2_is_unique = true;
-	}
+	if (!p2_matched && cl->is_unique)
+		cl->arg2_is_unique = true;
 
-	if (!p3_matched /*&& r->is_unique*/) {
-		r->arg3_is_unique = true;
+	if (!p3_matched && cl->is_unique)
+		cl->arg3_is_unique = true;
+}
+
+void just_in_time_rebuild(predicate *pr)
+{
+	pr->is_processed = true;
+
+	for (db_entry *dbe = pr->head; dbe; dbe = dbe->next) {
+		if (dbe->cl.ugen_erased)
+			continue;
+
+		check_rule(pr->m, dbe);
 	}
 }
 
@@ -901,41 +957,46 @@ static db_entry *assert_begin(module *m, unsigned nbr_vars, unsigned nbr_tempora
 	if (!pr) {
 		bool found = false, function = false;
 
-		if (get_builtin(m->pl, GET_STR(m, c), c->arity, &found, &function), found && !function) {
-			fprintf(stdout, "Error: permission error modifying %s/%u\n", GET_STR(m, c), c->arity);
+		if (get_builtin(m->pl, C_STR(m, c), c->arity, &found, &function), found && !function) {
+			//fprintf(stdout, "Error: permission error modifying %s/%u\n", C_STR(m, c), c->arity);
 			return NULL;
 		}
 
 		pr = create_predicate(m, c);
-		ensure(pr);
+		check_error(pr);
 
 		if (is_check_directive(p1))
 			pr->is_check_directive = true;
 
 		if (!consulting) {
-			push_property(m, GET_STR(m, c), c->arity, "dynamic");
+			push_property(m, C_STR(m, c), c->arity, "dynamic");
 			pr->is_dynamic = true;
+			pr->is_static = false;
 		} else {
 			if (m->prebuilt) {
-				push_property(m, GET_STR(m, c), c->arity, "built_in");
+				push_property(m, C_STR(m, c), c->arity, "built_in");
 			}
 
-			push_property(m, GET_STR(m, c), c->arity, "static");
+			push_property(m, C_STR(m, c), c->arity, "static");
 		}
 
 		if (consulting && m->make_public) {
-			push_property(m, GET_STR(m, c), c->arity, "public");
+			push_property(m, C_STR(m, c), c->arity, "public");
 			pr->is_public = true;
 		}
+	} else {
+		if (pr->is_tabled && !pr->is_dynamic && !pr->is_static) {
+			push_property(m, C_STR(m, c), c->arity, "static");
+			pr->is_static = true;
+		}
 	}
-
-	if (!pr->is_dynamic)
-		pr->is_processed = false;
 
 	if (m->prebuilt)
 		pr->is_prebuilt = true;
 
-	db_entry *dbe = calloc(sizeof(db_entry)+(sizeof(cell)*(p1->nbr_cells+1)), 1);
+	size_t dbe_size = sizeof(db_entry) + (sizeof(cell) * (p1->nbr_cells+1));
+	db_entry *dbe = calloc(1, dbe_size);
+
 	if (!dbe) {
 		pr->is_abolished = true;
 		return NULL;
@@ -962,54 +1023,68 @@ static void assert_commit(module *m, db_entry *dbe, predicate *pr, bool append)
 	pr->db_id++;
 	pr->cnt++;
 
-	if (pr->is_noindex || (pr->cnt < m->indexing_threshold))
+	clause *cl = &dbe->cl;
+	cl->arg1_is_unique = false;
+	cl->arg2_is_unique = false;
+	cl->arg3_is_unique = false;
+
+	uuid_gen(m->pl, &dbe->u);
+
+	if (pr->is_noindex)
 		return;
 
 	if (!pr->idx) {
-		//printf("*** index %s/%u\n", GET_STR(m, &pr->key), pr->key.arity);
-		pr->idx = m_create(index_cmpkey, NULL, m);
+		bool sys = C_STR(m, &pr->key)[0] == '$';
+
+		if (pr->cnt < (!pr->is_dynamic || sys ? m->indexing_threshold : 250))
+			return;
+
+		pr->idx = map_create(index_cmpkey, NULL, m);
 		ensure(pr->idx);
-		m_allow_dups(pr->idx, true);
+		map_allow_dups(pr->idx, true);
+
+		if (pr->key.arity > 1) {
+			pr->idx2 = map_create(index_cmpkey, NULL, m);
+			ensure(pr->idx2);
+			map_allow_dups(pr->idx2, true);
+		}
 
 		for (db_entry *cl2 = pr->head; cl2; cl2 = cl2->next) {
 			cell *c = get_head(cl2->cl.cells);
 
-			if (!cl2->cl.ugen_erased)
-				m_app(pr->idx, c, cl2);
+			if (!cl2->cl.ugen_erased) {
+				map_app(pr->idx, c, cl2);
+
+				cell *arg1 = c->arity ? c + 1 : NULL;
+				cell *arg2 = arg1 ? arg1 + arg1->nbr_cells : NULL;
+
+				if (pr->idx2 && arg2) {
+					map_app(pr->idx2, arg2, cl2);
+				}
+			}
 		}
+
+		return;
 	}
 
 	cell *c = get_head(dbe->cl.cells);
+	cell *arg1 = c->arity ? c + 1 : NULL;
+	cell *arg2 = arg1 ? arg1 + arg1->nbr_cells : NULL;
 
-	if (!append)
-		m_set(pr->idx, c, dbe);
-	else
-		m_app(pr->idx, c, dbe);
-}
+	if (arg1 && is_variable(arg1))
+		pr->is_var_in_first_arg = true;
 
-static bool check_multifile(module *m, predicate *pr, db_entry *dbe)
-{
-	if (pr->head && !pr->is_multifile && !pr->is_dynamic
-		&& (GET_STR(m, &pr->key)[0] != '$')) {
-		if (dbe->filename != pr->head->filename) {
-			for (db_entry *dbe = pr->head; dbe; dbe = dbe->next) {
-				add_to_dirty_list(m, dbe);
-				pr->is_processed = false;
-			}
+	if (!append) {
+		map_set(pr->idx, c, dbe);
 
-			if (dbe->owner->cnt)
-				fprintf(stderr, "Warning: overwriting %s/%u\n", GET_STR(m, &pr->key), pr->key.arity);
+		if (pr->idx2 && arg2)
+			map_set(pr->idx2, arg2, dbe);
+	} else {
+		map_app(pr->idx, c, dbe);
 
-			m_destroy(pr->idx_save);
-			m_destroy(pr->idx);
-			pr->idx_save = pr->idx = NULL;
-			pr->head = pr->tail = NULL;
-			dbe->owner->cnt = 0;
-			return false;
-		}
+		if (pr->idx2 && arg2)
+			map_app(pr->idx2, arg2, dbe);
 	}
-
-	return true;
 }
 
 db_entry *asserta_to_db(module *m, unsigned nbr_vars, unsigned nbr_temporaries, cell *p1, bool consulting)
@@ -1035,8 +1110,8 @@ db_entry *asserta_to_db(module *m, unsigned nbr_vars, unsigned nbr_temporaries, 
 
 	assert_commit(m, dbe, pr, false);
 
-	if (!consulting && (pr->cnt > 1))
-		check_rule(m, dbe);
+	if (!consulting && !pr->idx)
+		pr->is_processed = false;
 
 	return dbe;
 }
@@ -1063,23 +1138,56 @@ db_entry *assertz_to_db(module *m, unsigned nbr_vars, unsigned nbr_temporaries, 
 		pr->head = dbe;
 
 	assert_commit(m, dbe, pr, true);
+
+	if (!consulting && !pr->idx)
+		pr->is_processed = false;
+
 	return dbe;
 }
 
-bool retract_from_db(module *m, db_entry *dbe)
+static bool retract_from_db(db_entry *dbe)
 {
 	if (dbe->cl.ugen_erased)
 		return false;
 
-	dbe->owner->cnt--;
+	predicate *pr = dbe->owner;
+	module *m = pr->m;
 	dbe->cl.ugen_erased = ++m->pl->ugen;
 	dbe->filename = NULL;
+	pr->cnt--;
+
+	if (pr->idx && !pr->cnt) {
+		map_destroy(pr->idx2);
+		map_destroy(pr->idx);
+		pr->idx2 = NULL;
+
+		pr->idx = map_create(index_cmpkey, NULL, m);
+		ensure(pr->idx);
+		map_allow_dups(pr->idx, true);
+
+		if (pr->key.arity > 1) {
+			pr->idx2 = map_create(index_cmpkey, NULL, m);
+			ensure(pr->idx2);
+			map_allow_dups(pr->idx2, true);
+		}
+	}
+
 	return true;
 }
 
-static void xref_cell(module *m, clause *r, cell *c, predicate *parent)
+void add_to_dirty_list(db_entry *dbe)
 {
-	const char *functor = GET_STR(m, c);
+	if (!retract_from_db(dbe))
+		return;
+
+	predicate *pr = dbe->owner;
+	dbe->dirty = pr->dirty_list;
+	pr->dirty_list = dbe;
+}
+
+static void xref_cell(module *m, clause *cl, cell *c, predicate *parent)
+{
+	const char *functor = C_STR(m, c);
 	unsigned specifier;
 
 	if ((c->arity == 2)
@@ -1090,7 +1198,7 @@ static void xref_cell(module *m, clause *r, cell *c, predicate *parent)
 	}
 
 	bool found = false, function = false;
-	c->fn = get_builtin(m->pl, functor, c->arity, &found, &function);
+	c->fn_ptr = get_builtin(m->pl, functor, c->arity, &found, &function);
 
 	if (found) {
 		if (function)
@@ -1099,65 +1207,39 @@ static void xref_cell(module *m, clause *r, cell *c, predicate *parent)
 			c->flags |= FLAG_BUILTIN;
 
 		return;
-	}
+	} else
+		c->fn_ptr = NULL;
 
-	if ((c+c->nbr_cells) >= (r->cells+r->cidx-1)) {
+	if ((c+c->nbr_cells) >= (cl->cells + cl->cidx-1)) {
 		if (parent && (parent->key.val_off == c->val_off) && (parent->key.arity == c->arity)) {
 			c->flags |= FLAG_TAIL_REC;
-			r->is_tail_rec = true;
+			cl->is_tail_rec = true;
 		}
 	}
 }
 
-void xref_rule(module *m, clause *r, predicate *parent)
+void xref_rule(module *m, clause *cl, predicate *parent)
 {
-	r->arg1_is_unique = false;
-	r->arg2_is_unique = false;
-	r->arg3_is_unique = false;
-	r->is_unique = false;
-	r->is_tail_rec = false;
+	cl->arg1_is_unique = false;
+	cl->arg2_is_unique = false;
+	cl->arg3_is_unique = false;
+	cl->is_unique = false;
+	cl->is_tail_rec = false;
 
-	// Check if a variable occurs more than once in the head...
-
-	cell *head = get_head(r->cells);
-	cell *c = head;
-	uint64_t mask = 0;
-
-	for (pl_idx_t i = 0; i < head->nbr_cells; i++, c++) {
-		if (!is_variable(c))
-			continue;
-
-		uint64_t mask2 = 1ULL << c->var_nbr;
-
-		if (mask & mask2) {
-			r->is_complex = true;
-			break;
-		}
-
-		mask |= mask2;
-	}
-
-	// Other stuff...
-
-	cell *body = get_body(r->cells);
-	bool in_body = false;
-	c = r->cells;
+	cell *c = cl->cells;
 
 	if (c->val_off == g_sys_record_key_s)
 		return;
 
-	for (pl_idx_t i = 0; i < r->cidx; i++) {
-		cell *c = r->cells + i;
-
-		if (c == body)
-			in_body = true;
+	for (pl_idx_t i = 0; i < cl->cidx; i++) {
+		cell *c = cl->cells + i;
 
 		c->flags &= ~FLAG_TAIL_REC;
 
-		if (!is_literal(c))
+		if (!is_interned(c))
 			continue;
 
-		xref_cell(m, r, c, parent);
+		xref_cell(m, cl, c, parent);
 	}
 }
 
@@ -1183,7 +1265,7 @@ void xref_db(module *m)
 module *load_text(module *m, const char *src, const char *filename)
 {
 	parser *p = create_parser(m);
-	if (!p) return NULL;
+	check_error(p);
 	const char *save_filename = p->m->filename;
 	p->m->filename = set_known(m, filename);
 	p->consulting = true;
@@ -1234,7 +1316,7 @@ static bool unload_realfile(module *m, const char *filename)
 				continue;
 
 			if (dbe->filename && !strcmp(dbe->filename, filename)) {
-				if (!retract_from_db(m, dbe))
+				if (!retract_from_db(dbe))
 					continue;
 
 				dbe->dirty = pr->dirty_list;
@@ -1243,9 +1325,9 @@ static bool unload_realfile(module *m, const char *filename)
 			}
 		}
 
-		m_destroy(pr->idx_save);
-		m_destroy(pr->idx);
-		pr->idx_save = pr->idx = NULL;
+		map_destroy(pr->idx2);
+		map_destroy(pr->idx);
+		pr->idx2 = pr->idx = NULL;
 
 		if (!pr->cnt) {
 			if (!pr->is_multifile && !pr->is_dynamic)
@@ -1291,7 +1373,9 @@ bool unload_file(module *m, const char *filename)
 	free(savebuf);
 	free(tmpbuf);
 	filename = realbuf;
-	return unload_realfile(m, filename);
+	bool ok = unload_realfile(m, filename);
+	free(realbuf);
+	return ok;
 }
 
 module *load_fp(module *m, FILE *fp, const char *filename, bool including)
@@ -1371,8 +1455,7 @@ module *load_file(module *m, const char *filename, bool including)
 		for (int i = 0; i < MAX_STREAMS; i++) {
 			stream *str = &m->pl->streams[i];
 			char tmpbuf[256];
-			static unsigned s_cnt = 1;
-			snprintf(tmpbuf, sizeof(tmpbuf), "user_%u\n", s_cnt++);
+			snprintf(tmpbuf, sizeof(tmpbuf), "user");
 			filename = set_loaded(m, tmpbuf);
 
 			if (strcmp(str->name, "user_input"))
@@ -1399,7 +1482,7 @@ module *load_file(module *m, const char *filename, bool including)
 		}
 	}
 
-		size_t len = strlen(filename);
+	size_t len = strlen(filename);
 	char *tmpbuf = malloc(len + 20);
 	memcpy(tmpbuf, filename, len+1);
 
@@ -1532,19 +1615,21 @@ void destroy_module(module *m)
 		m->tasks = task;
 	}
 
-	miter *iter = m_first(m->defops);
+	miter *iter = map_first(m->defops);
 	op_table *opptr;
 
-	while (m_next(iter, (void**)&opptr))
+	while (map_next(iter, (void**)&opptr))
 		free(opptr);
 
-	m_destroy(m->defops);
-	iter = m_first(m->ops);
+	map_done(iter);
+	map_destroy(m->defops);
+	iter = map_first(m->ops);
 
-	while (m_next(iter, (void**)&opptr))
+	while (map_next(iter, (void**)&opptr))
 		free(opptr);
 
-	m_destroy(m->ops);
+	map_done(iter);
+	map_destroy(m->ops);
 
 	for (predicate *pr = m->head; pr;) {
 		predicate *save = pr->next;
@@ -1566,7 +1651,7 @@ void destroy_module(module *m)
 	if (m->fp)
 		fclose(m->fp);
 
-	m_destroy(m->index);
+	map_destroy(m->index);
 	destroy_parser(m->p);
 	clear_loaded(m);
 	free(m);
@@ -1581,8 +1666,7 @@ void duplicate_module(prolog *pl, module *m, const char *name)
 module *create_module(prolog *pl, const char *name)
 {
 	module *m = calloc(1, sizeof(module));
-	ensure(m);
-
+	check_error(m);
 	m->pl = pl;
 	m->filename = set_known(m, name);
 	m->name = set_known(m, name);
@@ -1591,26 +1675,25 @@ module *create_module(prolog *pl, const char *name)
 	m->flags.character_escapes = true;
 	m->error = false;
 	m->id = ++pl->next_mod_id;
-	m->defops = m_create((void*)strcmp, NULL, NULL);
-	m_allow_dups(m->defops, false);
-	m->indexing_threshold = 4096;
+	m->defops = map_create((void*)fake_strcmp, NULL, NULL);
+	map_allow_dups(m->defops, false);
+	m->indexing_threshold = 1500;
 	pl->modmap[m->id] = m;
 
 	if (strcmp(name, "system")) {
 		for (const op_table *ptr = g_ops; ptr->name; ptr++) {
 			op_table *tmp = malloc(sizeof(op_table));
 			memcpy(tmp, ptr, sizeof(op_table));
-			m_app(m->defops, tmp->name, tmp);
+			map_app(m->defops, tmp->name, tmp);
 		}
 	}
 
-	m->ops = m_create((void*)strcmp, NULL, NULL);
-	m_allow_dups(m->ops, false);
-	m->index = m_create(predicate_cmpkey, NULL, m);
-	m_allow_dups(m->index, false);
+	m->ops = map_create((void*)fake_strcmp, NULL, NULL);
+	map_allow_dups(m->ops, false);
+	m->index = map_create(predicate_cmpkey, NULL, m);
+	map_allow_dups(m->index, false);
 	m->p = create_parser(m);
-	ensure(m->p);
-
+	check_error(m->p);
 	set_multifile_in_db(m, "$predicate_property", 2);
 	set_multifile_in_db(m, ":-", 1);
 

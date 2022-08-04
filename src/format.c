@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "internal.h"
 #include "network.h"
 #include "query.h"
 #include "utf8.h"
@@ -64,7 +63,7 @@ static int get_next_char(query *q, list_reader_t *fmt)
 	if (is_smallint(head))
 		ch = get_smallint(head);
 	else if (is_atom(head)) {
-		const char *s = GET_STR(q, head);
+		const char *s = C_STR(q, head);
 		ch = peek_char_utf8(s);
 	} else
 		return -1;
@@ -113,27 +112,27 @@ static bool is_more_data(query *q, list_reader_t *fmt)
 		size_t save = dst - tmpbuf;							\
 		bufsiz += len;										\
 		tmpbuf = realloc(tmpbuf, bufsiz*=2);				\
-		may_ptr_error(tmpbuf);								\
+		check_heap_error(tmpbuf);								\
 		dst = tmpbuf + save;								\
 		nbytes = bufsiz - save;								\
 	}                                                       \
 }
 
-pl_status do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1_ctx, cell *p2, pl_idx_t p2_ctx)
+bool do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1_ctx, cell *p2, pl_idx_t p2_ctx)
 {
 	list_reader_t fmt1 = {0}, fmt2 = {0};
 	list_reader_t save_fmt1 = {0}, save_fmt2 = {0};
 	fmt1.p = p1;
 	fmt1.p_ctx = p1_ctx;
-	fmt1.srcbuf = is_atom(p1) ? GET_STR(q, p1) : NULL;
-	fmt1.srclen = is_atom(p1) ? LEN_STR(q, p1) : 0;
+	fmt1.srcbuf = is_atom(p1) ? C_STR(q, p1) : NULL;
+	fmt1.srclen = is_atom(p1) ? C_STRLEN(q, p1) : 0;
 	fmt1.src = fmt1.srcbuf;
 	fmt2.p = p2;
 	fmt2.p_ctx = p2_ctx;
 
 	size_t bufsiz = 1024*8;
 	char *tmpbuf = malloc(bufsiz);
-	may_ptr_error(tmpbuf);
+	check_heap_error(tmpbuf);
 	char *dst = tmpbuf;
 	*dst = '\0';
 	size_t nbytes = bufsiz;
@@ -296,7 +295,7 @@ pl_status do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1
 
 		if (!p2 || !is_list(p2)) {
 			cell tmp;
-			make_literal(&tmp, g_nil_s);
+			make_atom(&tmp, g_nil_s);
 			return throw_error(q, &tmp, q->st.curr_frame, "domain_error", "missing_args");
 		}
 
@@ -320,9 +319,9 @@ pl_status do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1
 		switch(ch) {
 		case 's':
 			if (is_string(c)) {
-				len = MAX_OF(argval, (int)LEN_STR(q, c));
+				len = MAX_OF(argval, (int)C_STRLEN(q, c));
 				CHECK_BUF(len);
-				memcpy(dst, GET_STR(q, c), len);
+				memcpy(dst, C_STR(q, c), len);
 			} else {
 				list_reader_t fmt3 = {0};
 				fmt3.p = c;
@@ -362,7 +361,7 @@ pl_status do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1
 
 		case 'e':
 		case 'E':
-			if (!is_real(c)) {
+			if (!is_float(c)) {
 				free(tmpbuf);
 				return throw_error(q, c, q->st.curr_frame, "type_error", "float");
 			}
@@ -372,21 +371,21 @@ pl_status do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1
 
 			if (argval) {
 				if (ch == 'e')
-					len = sprintf(dst, "%.*e", argval, get_real(c));
+					len = sprintf(dst, "%.*e", argval, get_float(c));
 				else
-					len = sprintf(dst, "%.*E", argval, get_real(c));
+					len = sprintf(dst, "%.*E", argval, get_float(c));
 			} else {
 				if (ch == 'e')
-					len = sprintf(dst, "%e", get_real(c));
+					len = sprintf(dst, "%e", get_float(c));
 				else
-					len = sprintf(dst, "%E", get_real(c));
+					len = sprintf(dst, "%E", get_float(c));
 			}
 
 			break;
 
 		case 'g':
 		case 'G':
-			if (!is_real(c)) {
+			if (!is_float(c)) {
 				free(tmpbuf);
 				return throw_error(q, c, q->st.curr_frame, "type_error", "float");
 			}
@@ -396,20 +395,20 @@ pl_status do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1
 
 			if (argval) {
 				if (ch == 'g')
-					len = sprintf(dst, "%.*g", argval, get_real(c));
+					len = sprintf(dst, "%.*g", argval, get_float(c));
 				else
-					len = sprintf(dst, "%.*G", argval, get_real(c));
+					len = sprintf(dst, "%.*G", argval, get_float(c));
 			} else {
 				if (ch == 'g')
-					len = sprintf(dst, "%g", get_real(c));
+					len = sprintf(dst, "%g", get_float(c));
 				else
-					len = sprintf(dst, "%G", get_real(c));
+					len = sprintf(dst, "%G", get_float(c));
 			}
 
 			break;
 
 		case 'f':
-			if (!is_real(c)) {
+			if (!is_float(c)) {
 				free(tmpbuf);
 				return throw_error(q, c, q->st.curr_frame, "type_error", "float");
 			}
@@ -418,9 +417,9 @@ pl_status do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1
 			CHECK_BUF(len);
 
 			if (argval)
-				len = sprintf(dst, "%.*f", argval, get_real(c));
+				len = sprintf(dst, "%.*f", argval, get_float(c));
 			else
-				len = sprintf(dst, "%f", get_real(c));
+				len = sprintf(dst, "%f", get_float(c));
 
 			break;
 
@@ -552,16 +551,16 @@ pl_status do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1
 		stream *str = &q->pl->streams[n];
 		net_write(tmpbuf, len, str);
 	} else if (is_structure(str)
-		&& ((CMP_SLICE2(q, str, "atom")
-		&& CMP_SLICE2(q, str, "chars")
-		&& CMP_SLICE2(q, str, "string"))
+		&& ((CMP_STR_CSTR(q, str, "atom")
+		&& CMP_STR_CSTR(q, str, "chars")
+		&& CMP_STR_CSTR(q, str, "string"))
 		|| (str->arity > 1) || !is_variable(str+1))) {
 		free(tmpbuf);
 		return throw_error(q, str, str_ctx, "type_error", "structure");
-	} else if (is_structure(str) && !CMP_SLICE2(q, str, "atom")) {
+	} else if (is_structure(str) && !CMP_STR_CSTR(q, str, "atom")) {
 		cell *c = deref(q, str+1, str_ctx);
 		cell tmp;
-		may_error(make_cstringn(&tmp, tmpbuf, len), free(tmpbuf));
+		check_heap_error(make_cstringn(&tmp, tmpbuf, len), free(tmpbuf));
 		set_var(q, c, q->latest_ctx, &tmp, q->st.curr_frame);
 		unshare_cell(&tmp);
 	} else if (is_structure(str)) {
@@ -569,9 +568,9 @@ pl_status do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1
 		cell tmp;
 
 		if (strlen(tmpbuf))
-			may_error(make_stringn(&tmp, tmpbuf, len), free(tmpbuf));
+			check_heap_error(make_stringn(&tmp, tmpbuf, len), free(tmpbuf));
 		else
-			make_literal(&tmp, g_nil_s);
+			make_atom(&tmp, g_nil_s);
 
 		set_var(q, c, q->latest_ctx, &tmp, q->st.curr_frame);
 		unshare_cell(&tmp);
@@ -587,7 +586,7 @@ pl_status do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1
 				if (feof(str->fp) || ferror(str->fp)) {
 					free(tmpbuf);
 					fprintf(stdout, "Error: end of file on write\n");
-					return pl_error;
+					return false;
 				}
 			}
 
@@ -601,6 +600,6 @@ pl_status do_format(query *q, cell *str, pl_idx_t str_ctx, cell *p1, pl_idx_t p1
 	}
 
 	free(tmpbuf);
-	return pl_success;
+	return true;
 }
 

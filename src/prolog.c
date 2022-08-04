@@ -1,12 +1,11 @@
+#include <ctype.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <ctype.h>
 
-#include "internal.h"
 #include "library.h"
-#include "parser.h"
 #include "module.h"
+#include "parser.h"
 #include "prolog.h"
 
 void convert_path(char *filename);
@@ -19,9 +18,9 @@ pl_idx_t g_sys_elapsed_s, g_sys_queue_s, g_braces_s, g_call_s, g_braces_s;
 pl_idx_t g_sys_stream_property_s, g_unify_s, g_on_s, g_off_s, g_sys_var_s;
 pl_idx_t g_plus_s, g_minus_s, g_once_s, g_post_unify_hook_s, g_sys_record_key_s;
 pl_idx_t g_conjunction_s, g_disjunction_s, g_at_s, g_sys_ne_s, g_sys_incr_s;
-pl_idx_t g_dcg_s, g_throw_s, g_sys_block_catcher_s, g_sys_cut_if_det_s;
+pl_idx_t g_dcg_s, g_throw_s, g_sys_block_catcher_s, g_sys_drop_barrier;
 pl_idx_t g_sys_soft_cut_s, g_if_then_s, g_soft_cut_s, g_negation_s;
-pl_idx_t g_error_s, g_slash_s, g_sys_cleanup_if_det_s;
+pl_idx_t g_error_s, g_slash_s, g_sys_cleanup_if_det_s, g_sys_table_s;
 pl_idx_t g_goal_expansion_s;
 
 unsigned g_cpu_count = 4;
@@ -37,7 +36,7 @@ bool is_multifile_in_db(prolog *pl, const char *mod, const char *name, unsigned 
 	if (!m) return false;
 
 	cell tmp = (cell){0};
-	tmp.tag = TAG_LITERAL;
+	tmp.tag = TAG_INTERNED;
 	tmp.val_off = index_from_pool(m->pl, name);
 	if (tmp.val_off == ERR_IDX) return false;
 	tmp.arity = arity;
@@ -65,8 +64,8 @@ static pl_idx_t add_to_pool(prolog *pl, const char *name)
 	memcpy(pl->pool + offset, name, len+1);
 	pl->pool_offset += len + 1;
 	const char *key = strdup(name);
-	m_set(pl->symtab, key, (void*)(size_t)offset);
-	g_literal_cnt++;
+	map_set(pl->symtab, key, (void*)(size_t)offset);
+	g_interned_cnt++;
 	return (pl_idx_t)offset;
 }
 
@@ -74,7 +73,7 @@ pl_idx_t index_from_pool(prolog *pl, const char *name)
 {
 	const void *val;
 
-	if (m_get(pl->symtab, name, &val))
+	if (map_get(pl->symtab, name, &val))
 		return (pl_idx_t)(size_t)val;
 
 	return add_to_pool(pl, name);
@@ -110,7 +109,6 @@ int get_halt_code(prolog *pl) { return pl->halt_code; }
 
 void set_trace(prolog *pl) { pl->trace = true; }
 void set_quiet(prolog *pl) { pl->quiet = true; }
-void set_stats(prolog *pl) { pl->stats = true; }
 void set_opt(prolog *pl, int level) { pl->opt = level; }
 
 bool pl_eval(prolog *pl, const char *s)
@@ -143,10 +141,117 @@ static void g_destroy()
 	free(g_tpl_lib);
 }
 
-static void keyvalfree(const void *key, const void *val)
+static void keyfree(const void *key, const void *val, const void *p)
+{
+	free((void*)key);
+}
+
+static void keyvalfree(const void *key, const void *val, const void *p)
 {
 	free((void*)key);
 	free((void*)val);
+}
+
+builtins *get_builtin(prolog *pl, const char *name, unsigned arity, bool *found, bool *function)
+{
+	miter *iter = map_find_key(pl->biftab, name);
+	builtins *ptr;
+
+	while (map_next_key(iter, (void**)&ptr)) {
+		if (ptr->arity == arity) {
+			if (found) *found = true;
+			if (function) *function = ptr->function;
+			map_done(iter);
+			return ptr;
+		}
+	}
+
+	if (found) *found = false;
+	if (function) *function = false;
+	map_done(iter);
+	return NULL;
+}
+
+builtins *get_fn_ptr(void *fn)
+{
+	for (builtins *ptr = g_iso_bifs; ptr->name; ptr++) {
+		if (ptr->fn == fn)
+			return ptr;
+	}
+
+	for (builtins *ptr = g_functions_bifs; ptr->name; ptr++) {
+		if (ptr->fn == fn)
+			return ptr;
+	}
+
+	for (builtins *ptr = g_other_bifs; ptr->name; ptr++) {
+		if (ptr->fn == fn)
+			return ptr;
+	}
+
+	for (builtins *ptr = g_files_bifs; ptr->name; ptr++) {
+		if (ptr->fn == fn)
+			return ptr;
+	}
+
+	for (builtins *ptr = g_ffi_bifs; ptr->name; ptr++) {
+		if (ptr->fn == fn)
+			return ptr;
+	}
+
+	for (builtins *ptr = g_contrib_bifs; ptr->name; ptr++) {
+		if (ptr->fn == fn)
+			return ptr;
+	}
+
+	return NULL;
+}
+
+static int max_ffi_idx = 0;
+
+void register_ffi(prolog *pl, const char *name, unsigned arity, void *fn, uint8_t *types, uint8_t ret_type, bool function)
+{
+	builtins *ptr = &g_ffi_bifs[max_ffi_idx++];
+	ptr->name = name;
+	ptr->arity = arity;
+	ptr->fn = fn;
+	ptr->help = NULL;
+	ptr->function = function;
+	ptr->ffi = true;
+
+	for (unsigned i = 0; i < arity; i++)
+		ptr->types[i] = types[i];
+
+	ptr->ret_type = ret_type;
+	map_app(pl->biftab, ptr->name, ptr);
+}
+
+void load_builtins(prolog *pl)
+{
+	for (const builtins *ptr = g_iso_bifs; ptr->name; ptr++) {
+		map_app(pl->biftab, ptr->name, ptr);
+	}
+
+	for (const builtins *ptr = g_functions_bifs; ptr->name; ptr++) {
+		map_app(pl->biftab, ptr->name, ptr);
+		max_ffi_idx++;
+	}
+
+	for (const builtins *ptr = g_other_bifs; ptr->name; ptr++) {
+		map_app(pl->biftab, ptr->name, ptr);
+	}
+
+	for (const builtins *ptr = g_files_bifs; ptr->name; ptr++) {
+		map_app(pl->biftab, ptr->name, ptr);
+	}
+
+	for (const builtins *ptr = g_ffi_bifs; ptr->name; ptr++) {
+		map_app(pl->biftab, ptr->name, ptr);
+	}
+
+	for (const builtins *ptr = g_contrib_bifs; ptr->name; ptr++) {
+		map_app(pl->biftab, ptr->name, ptr);
+	}
 }
 
 static void g_init()
@@ -169,9 +274,9 @@ void pl_destroy(prolog *pl)
 	while (pl->modules)
 		destroy_module(pl->modules);
 
-	m_destroy(pl->funtab);
-	m_destroy(pl->symtab);
-	m_destroy(pl->keyval);
+	map_destroy(pl->biftab);
+	map_destroy(pl->symtab);
+	map_destroy(pl->keyval);
 	free(pl->pool);
 	free(pl->tabs);
 	pl->pool_offset = 0;
@@ -205,6 +310,9 @@ void pl_destroy(prolog *pl)
 
 prolog *pl_create()
 {
+	//printf("*** sizeof(cell) = %u bytes\n", (unsigned)sizeof(cell));
+	assert(sizeof(cell) == 24);
+
 	prolog *pl = calloc(1, sizeof(prolog));
 
 	if (!g_tpl_count++)
@@ -226,14 +334,14 @@ prolog *pl_create()
 			g_tpl_lib = strdup("../library");
 	}
 
-	pl->pool = calloc(pl->pool_size=INITIAL_POOL_SIZE, 1);
+	pl->pool = calloc(1, pl->pool_size=INITIAL_POOL_SIZE);
 	if (!pl->pool) return NULL;
 	bool error = false;
 
-	CHECK_SENTINEL(pl->symtab = m_create((void*)strcmp, (void*)free, NULL), NULL);
-	CHECK_SENTINEL(pl->keyval = m_create((void*)strcmp, (void*)keyvalfree, NULL), NULL);
-	m_allow_dups(pl->symtab, false);
-	m_allow_dups(pl->keyval, false);
+	CHECK_SENTINEL(pl->symtab = map_create((void*)fake_strcmp, (void*)keyfree, NULL), NULL);
+	CHECK_SENTINEL(pl->keyval = map_create((void*)fake_strcmp, (void*)keyvalfree, NULL), NULL);
+	map_allow_dups(pl->symtab, false);
+	map_allow_dups(pl->keyval, false);
 
 	if (error) {
 		free(pl->pool);
@@ -286,8 +394,9 @@ prolog *pl_create()
 	CHECK_SENTINEL(g_sys_incr_s = index_from_pool(pl, "$incr"), ERR_IDX);
 	CHECK_SENTINEL(g_sys_block_catcher_s = index_from_pool(pl, "$block_catcher"), ERR_IDX);
 	CHECK_SENTINEL(g_sys_soft_cut_s = index_from_pool(pl, "$soft_cut"), ERR_IDX);
-	CHECK_SENTINEL(g_sys_cut_if_det_s = index_from_pool(pl, "$cut_if_det"), ERR_IDX);
+	CHECK_SENTINEL(g_sys_drop_barrier = index_from_pool(pl, "$drop_barrier"), ERR_IDX);
 	CHECK_SENTINEL(g_sys_cleanup_if_det_s = index_from_pool(pl, "$cleanup_if_det"), ERR_IDX);
+	CHECK_SENTINEL(g_sys_table_s = index_from_pool(pl, "$table"), ERR_IDX);
 
 	if (error)
 		return NULL;
@@ -312,10 +421,10 @@ prolog *pl_create()
 
 	pl->streams[3].ignore = true;;
 
-	pl->funtab = m_create((void*)strcmp, NULL, NULL);
-	m_allow_dups(pl->funtab, false);
+	pl->biftab = map_create((void*)fake_strcmp, NULL, NULL);
+	map_allow_dups(pl->biftab, false);
 
-	if (pl->funtab)
+	if (pl->biftab)
 		load_builtins(pl);
 
 	//printf("Library: %s\n", g_tpl_lib);
@@ -386,14 +495,15 @@ prolog *pl_create()
 			) {
 			size_t len = *lib->len;
 			char *src = malloc(len+1);
-			ensure(src);
+			check_error(src, pl_destroy(pl));
 			memcpy(src, lib->start, len);
 			src[len] = '\0';
 			ASTRING(s1);
 			ASTRING_sprintf(s1, "library/%s", lib->name);
-			load_text(pl->user_m, src, ASTRING_cstr(s1));
+			module *m = load_text(pl->user_m, src, ASTRING_cstr(s1));
 			ASTRING_free(s1);
 			free(src);
+			check_error(m, pl_destroy(pl));
 		}
 	}
 

@@ -20,7 +20,9 @@
 #else
 #include <sys/stat.h>
 #include <sys/types.h>
+#ifndef __wasi__
 #include <sys/wait.h>
+#endif
 #define msleep(ms)                                                     \
 {                                                                      \
 	struct timespec tv;                                                \
@@ -36,6 +38,7 @@ void sigfn(int s)
 	g_tpl_interrupt = s;
 }
 
+#ifndef __wasi__
 static int daemonize(int argc, char *argv[])
 {
 	char path[1024];
@@ -132,6 +135,7 @@ static int daemonize(int argc, char *argv[])
 	return 1;
 #endif
 }
+#endif
 
 int main(int ac, char *av[])
 {
@@ -176,14 +180,13 @@ int main(int ac, char *av[])
 			set_opt(pl, 0);
 		else if (!strcmp(av[i], "-t") || !strcmp(av[i], "--trace"))
 			set_trace(pl);
-		else if (!strcmp(av[i], "--stats"))
-			set_stats(pl);
 		else if (!strcmp(av[i], "--ns"))
 			ns = true;
 		else if (!strcmp(av[i], "-d") || !strcmp(av[i], "--daemon"))
 			daemon = 1;
 	}
 
+#ifndef __wasi__
 	if (daemon) {
 		if (!daemonize(ac, av)) {
 			pl_destroy(pl);
@@ -195,8 +198,9 @@ int main(int ac, char *av[])
 		signal(SIGALRM, &sigfn);
 #endif
 	}
+#endif
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__wasi__)
 	signal(SIGPIPE, SIG_IGN);
 #endif
 	const char *goal = NULL;
@@ -225,12 +229,12 @@ int main(int ac, char *av[])
 		} else if (!strcmp(av[i], "--library")) {
 			do_goal = 0;
 			do_lib = 1;
-		} else if (!strcmp(av[i], "-f") || !strcmp(av[i], "-l") || !strcmp(av[i], "--consult-file")) {
+		} else if (!strcmp(av[i], "-f") || !strcmp(av[i], "-l") || !strcmp(av[i], "--file") || !strcmp(av[i], "--consult-file")) {
 			if (!strcmp(av[i], "-f"))
 				no_res = true;
 
 			do_lib = do_goal = 0;
-		} else if (!strcmp(av[i], "-g") || !strcmp(av[i], "-e") || !strcmp(av[i], "--query-goal")) {
+		} else if (!strcmp(av[i], "-g") || !strcmp(av[i], "-e") || !strcmp(av[i], "--goal") || !strcmp(av[i], "--query-goal")) {
 			do_lib = 0;
 			do_goal = 1;
 		} else if (av[i][0] == '-') {
@@ -244,7 +248,7 @@ int main(int ac, char *av[])
 			goal = av[i];
 		} else {
 			if (!pl_consult(pl, av[i])) {
-				fprintf(stderr, "Error: error(extistence_error(source_sink,'%s'),consult/1)\n", av[i]);
+				fprintf(stderr, "Error: error(existence_error(source_sink,'%s'),consult/1)\n", av[i]);
 				pl_destroy(pl);
 				return 1;
 			}
@@ -291,7 +295,6 @@ int main(int ac, char *av[])
 		fprintf(stdout, "  -d, --daemon\t\t- daemonize\n");
 		fprintf(stdout, "  -w, --watchdog\t- create watchdog\n");
 		fprintf(stdout, "  --consult\t\t- consult from STDIN\n");
-		fprintf(stdout, "  --stats\t\t- print stats\n");
 	}
 
 	if (version) {

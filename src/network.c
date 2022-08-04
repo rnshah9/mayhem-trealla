@@ -1,9 +1,9 @@
+#include <ctype.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <ctype.h>
 #include <time.h>
-#include <errno.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -19,7 +19,9 @@
 #endif
 #define EWOULDBLOCK WSAEWOULDBLOCK
 #else
+#ifndef __wasi__
 #include <netdb.h>
+#endif
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/ioctl.h>
@@ -33,7 +35,6 @@
 #include <openssl/err.h>
 #endif
 
-#include "internal.h"
 #include "network.h"
 #include "query.h"
 
@@ -44,7 +45,7 @@ static SSL_CTX *g_ctx = NULL;
 
 int net_domain_connect(const char *name, bool udp)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__wasi__)
 	int fd = socket(AF_UNIX, udp?SOCK_DGRAM:SOCK_STREAM, 0);
 
 	if (fd == -1)
@@ -68,7 +69,7 @@ int net_domain_connect(const char *name, bool udp)
 
 int net_domain_server(const char *name, bool udp)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__wasi__)
     struct sockaddr_un server_sockaddr;
     memset(&server_sockaddr, 0, sizeof(struct sockaddr_un));
     int fd = socket(AF_UNIX, udp?SOCK_DGRAM:SOCK_STREAM, 0);
@@ -98,7 +99,7 @@ int net_domain_server(const char *name, bool udp)
 
 int net_connect(const char *hostname, unsigned port, bool udp, bool nodelay)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__wasi__)
 	struct addrinfo hints, *result, *rp;
 	int fd, status;
 
@@ -150,7 +151,7 @@ int net_connect(const char *hostname, unsigned port, bool udp, bool nodelay)
 
 int net_server(const char *hostname, unsigned port, bool udp, const char *keyfile, const char *certfile)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__wasi__)
 	(void) hostname;
 	struct addrinfo hints, *result, *rp;
 	int fd, status;
@@ -231,7 +232,7 @@ int net_server(const char *hostname, unsigned port, bool udp, const char *keyfil
 
 int net_accept(stream *str)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__wasi__)
 	struct sockaddr_in addr = {0};
 	socklen_t len = 0;
 	int fd = accept(fileno(str->fp), (struct sockaddr*)&addr, &len);
@@ -255,7 +256,7 @@ int net_accept(stream *str)
 
 void net_set_nonblocking(stream *str)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__wasi__)
 	unsigned long flag = 1;
 	ioctl(fileno(str->fp), FIONBIO, &flag);
 #endif
@@ -445,10 +446,14 @@ void net_close(stream *str)
 	}
 #endif
 
+#ifdef pclose
 	if (str->domain)
 		pclose(str->fp);
 	else
 		fclose(str->fp);
+#else
+	fclose(str->fp);
+#endif
 
 	str->fp = NULL;
 }

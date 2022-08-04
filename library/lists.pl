@@ -2,17 +2,48 @@
 		member/2, memberchk/2,
 		select/3, selectchk/3,
 		append/2, append/3,
-		subtract/3, union/3, intersection/3,
-		nth1/3, nth0/3,
+		subtract/3, union/3, intersection/3, is_set/1,
+		nth1/3, nth0/3, nth1/4, nth0/4,
 		last/2, flatten/2, same_length/2,
 		sum_list/2, prod_list/2, max_list/2, min_list/2,
 		toconjunction/2, numlist/3,
 		length/2, reverse/2
 	]).
 
+/*  Author:        Andrew Davison, Mark Thom, Jan Wielemaker, and Richard O'Keefe
+    Copyright (c)  2022,      Andrew Davison
+    Copyright (c)  2018-2021, Mark Thom
+    Copyright (c)  2002-2020, University of Amsterdam
+                              VU University Amsterdam
+                              SWI-Prolog Solutions b.v.
+    All rights reserved.
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions
+    are met:
+    1. Redistributions of source code must retain the above copyright
+       notice, this list of conditions and the following disclaimer.
+    2. Redistributions in binary form must reproduce the above copyright
+       notice, this list of conditions and the following disclaimer in
+       the documentation and/or other materials provided with the
+       distribution.
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+    "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+    LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+    FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+    COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+    INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+    BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+    LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+    ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+    POSSIBILITY OF SUCH DAMAGE.
+*/
+
 reverse(Xs, Ys) :-
-    (  nonvar(Xs) -> reverse_(Xs, Ys, [], Xs)
-    ;  reverse_(Ys, Xs, [], Ys)
+    (	nonvar(Xs)
+	->	reverse_(Xs, Ys, [], Xs)
+    ;	reverse_(Ys, Xs, [], Ys)
     ).
 
 reverse_([], [], YsRev, YsRev).
@@ -49,52 +80,83 @@ intersection([], _, []).
 intersection([H|T], Y, [H|Z]) :- member(H, Y), !, intersection(T, Y, Z).
 intersection([_|T], Y, Z) :- intersection(T, Y, Z).
 
-nth1(N, List, Head) :-
-    nonvar(N),
-    must_be(integer, N),
-    (N < 0 -> throw(error(domain_error(not_less_than_zero), nth1/3)) ; true),
-    nth1_(N, List, Head),
-    !.
-nth1(N, List, Head) :-
-	nth1_(N, List, Head).
 
-nth1_(1, [Head|_], Head).
-nth1_(N, [_|Tail], Elem) :-
-    nonvar(N),
-    N > 0,
-    M is N-1,
-    nth1_(M, Tail, Elem),
-    !.
-nth1_(N,[_|T],Item) :-
-    var(N),
-    nth1_(M,T,Item),
-    N is M + 1.
+nth1_orig(N, Es, E) :-
+	can_be(integer, N),
+	can_be(list_or_partial_list, Es),
+	(   integer(N) ->
+		must_be(N, not_less_than_zero, nth1/3, _),
+		N1 is N - 1,
+		nth0_index(N1, Es, E)
+	;   nth0_search(N1, Es, E),
+		N is N1 + 1
+	).
 
-nth0(N, List, Head) :-
-    nonvar(N),
-    must_be(integer, N),
-    (N < 0 -> throw(error(domain_error(not_less_than_zero), nth0/3)) ; true),
-    nth0_(N, List, Head),
-    !.
-nth0(N, List, Head) :-
-	nth0_(N, List, Head).
+nth0_orig(N, Es, E) :-
+	can_be(integer, N),
+	can_be(list_or_partial_list, Es),
+	(   integer(N) ->
+		must_be(N, not_less_than_zero, nth0/3, _),
+		nth0_index(N, Es, E)
+	;   nth0_search(N, Es, E)
+	).
 
-nth0_(0, [Head|_], Head).
-nth0_(N, [_|Tail], Elem) :-
-    nonvar(N),
-    N > 0,
-    M is N-1,
-    nth0_(M, Tail, Elem),
-    !.
-nth0_(N,[_|T],Item) :-
-    var(N),
-    nth0_(M,T,Item),
-    N is M + 1.
+nth0_index(0, [E|_], E) :- !.
+nth0_index(N, [_|Es], E) :-
+	N > 0,
+	N1 is N - 1,
+	nth0_index(N1, Es, E).
+
+nth0_search(N, Es, E) :-
+        nth0_search(0, N, Es, E).
+
+nth0_search(N, N, [E|_], E).
+nth0_search(N0, N, [_|Es], E) :-
+        N1 is N0 + 1,
+        nth0_search(N1, N, Es, E).
+
+nth1(N, Es0, E) :-
+	nonvar(N),
+	N > 0,
+	N1 is N - 1,
+	'$skip_max_list'(N1, N1, Es0,Es),
+	!,
+	Es = [E|_].
+nth1(N, Es, E) :-
+	nth1_orig(N, Es, E).
+
+nth0(N, Es0, E) :-
+	nonvar(N),
+	'$skip_max_list'(N, N, Es0,Es),
+	!,
+	Es = [E|_].
+nth0(N, Es, E) :-
+	nth0_orig(N, Es, E).
+
+nth1(Nth, List, Element, Rest) :-
+	nth(Element, List, 1, Nth, Rest).
+
+nth0(Nth, List, Element, Rest) :-
+	nth(Element, List, 0, Nth, Rest).
+
+nth(Element, List, Acc, Nth, Rest) :-
+	(	integer(Nth),
+		Nth >= Acc,
+		nth_aux(NthElement, List, Acc, Nth, Rest) ->
+		Element = NthElement
+	;	var(Nth),
+		nth_aux(Element, List, Acc, Nth, Rest)
+	).
+
+nth_aux(Element, [Element| Rest], Position, Position, Rest).
+nth_aux(Element, [Head| Tail], Position0, Position, [Head| Rest]) :-
+	Position1 is Position0 + 1,
+	nth_aux(Element, Tail, Position1, Position, Rest).
+
+last([X|Xs], Last) :- last_(Xs, X, Last).
 
 last_([], Last, Last).
 last_([X|Xs], _, Last) :- last_(Xs, X, Last).
-
-last([X|Xs], Last) :- last_(Xs, X, Last).
 
 flatten(List, FlatList) :-
     flatten_(List, [], FlatList0),
@@ -165,8 +227,8 @@ toconjunction_([H|T], In, Out) :-
 	toconjunction_(T, Out2, Out).
 
 numlist(L, U, Ns) :-
-	must_be(integer, L),
-	must_be(integer, U),
+	must_be(L, integer, numlist/3, _),
+	must_be(U, integer, numlist/3, _),
 	L =< U,
 	numlist_(L, U, Ns).
 
@@ -177,8 +239,14 @@ numlist_(L, U, [L|Ns]) :-
 	L2 is L+1,
 	numlist_(L2, U, Ns).
 
+is_set(Set) :-
+	'$skip_list'(Len, Set, Tail),
+	Tail == [],
+	sort(Set, Sorted),
+	length(Sorted, Len)
+  .
 length(Xs0, N) :-
-   '$skip_max_list'(M, N, Xs0,Xs),
+   '$skip_max_list'(M, N, Xs0, Xs),
    !,
    (  Xs == [] -> N = M
    ;  nonvar(Xs) -> var(N), Xs = [_|_], throw(error(resource_error(finite_memory),length/2))

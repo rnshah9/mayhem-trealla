@@ -4,13 +4,12 @@
 #include <string.h>
 #include <time.h>
 
-#include "internal.h"
+#include "heap.h"
 #include "history.h"
-#include "parser.h"
 #include "module.h"
+#include "parser.h"
 #include "prolog.h"
 #include "query.h"
-#include "heap.h"
 #include "utf8.h"
 
 #ifdef _WIN32
@@ -39,7 +38,9 @@ int check_interrupt(query *q)
 
 		fflush(stdout);
 		int ch = history_getch();
+#ifndef __wasi__
 		printf("%c\n", ch);
+#endif
 
 		if (ch == 'h') {
 			printf("Action (a)ll, (e)nd, e(x)it, (r)etry, (c)ontinue, (t)race, cree(p): ");
@@ -60,8 +61,10 @@ int check_interrupt(query *q)
 			break;
 		}
 
+#ifndef __wasi__
 		if (ch == '\n')
 			return -1;
+#endif
 
 		if (ch == 'e') {
 			q->abort = true;
@@ -121,6 +124,10 @@ bool check_redo(query *q)
 			continue;
 		}
 
+#ifdef __wasi__
+	printf(" ");
+#endif
+
 		if (ch == 'a') {
 			printf(" ");
 			fflush(stdout);
@@ -140,7 +147,12 @@ bool check_redo(query *q)
 			break;
 		}
 
+#ifndef __wasi__
 		if ((ch == '\n') || (ch == 'e')) {
+#else
+		// WASI always sends buffered input with a linebreak, so use '.' instead
+		if ((ch == '.') || (ch == 'e')) {
+#endif
 			//printf(";  ... .\n");
 			printf("  ... .\n");
 			q->pl->did_dump_vars = true;
@@ -225,14 +237,10 @@ static int varunformat(const char *s)
 
 static bool any_attributed(const query *q)
 {
-	const parser *p = q->p;
 	const frame *f = GET_FIRST_FRAME();
 	bool any = false;
 
-	for (unsigned i = 0; i < p->nbr_vars; i++) {
-		if (!strcmp(p->vartab.var_name[i], "_"))
-			continue;
-
+	for (unsigned i = 0; i < f->nbr_vars; i++) {
 		const slot *e = GET_SLOT(f, i);
 
 		if (!is_empty(&e->c) || !e->c.attrs)
@@ -252,7 +260,7 @@ void dump_vars(query *q, bool partial)
 	parser *p = q->p;
 	frame *f = GET_FIRST_FRAME();
 	q->is_dump_vars = true;
-	q->pl->tab_idx = 0;
+	q->tab_idx = 0;
 	bool any = false;
 
 	// Build the ignore list for variable name clashes....
@@ -264,6 +272,7 @@ void dump_vars(query *q, bool partial)
 		int j;
 
 		if ((p->vartab.var_name[i][0] == '_')
+			&& isalpha(p->vartab.var_name[i][1])
 			&& ((j = varunformat(p->vartab.var_name[i]+1)) != -1))
 			q->ignores[j] = true;
 	}
@@ -287,6 +296,7 @@ void dump_vars(query *q, bool partial)
 
 	cell *vlist = p->nbr_vars ? end_list(q) : NULL;
 	bool space = false;
+	q->print_idx = 0;
 
 	for (unsigned i = 0; i < p->nbr_vars; i++) {
 		if (!strcmp(p->vartab.var_name[i], "_"))
@@ -297,12 +307,12 @@ void dump_vars(query *q, bool partial)
 		if (is_empty(&e->c))
 			continue;
 
-		cell *c = deref(q, &e->c, e->ctx);
+		cell *c = deref(q, &e->c, e->c.var_ctx);
 		pl_idx_t c_ctx = q->latest_ctx;
 
 		if (is_indirect(&e->c)) {
 			c = e->c.val_ptr;
-			c_ctx = e->ctx;
+			c_ctx = e->c.var_ctx;
 		}
 
 		if (is_variable(c) && is_anon(c))
@@ -310,7 +320,7 @@ void dump_vars(query *q, bool partial)
 
 		if (any)
 			fprintf(stdout, ", ");
-		else if (!q->is_redo)
+		else if (!q->is_redo || q->is_input)
 			fprintf(stdout, "   ");
 		else
 			fprintf(stdout, " ");
@@ -329,18 +339,19 @@ void dump_vars(query *q, bool partial)
 		space = false;
 
 		if (is_structure(c)) {
-			unsigned pri = find_op(q->st.m, GET_STR(q, c), GET_OP(c));
+			unsigned pri = find_op(q->st.m, C_STR(q, c), GET_OP(c));
 
 			if (pri >= 700)
 				parens = true;
 		}
 
-		if (is_atom(c) && !is_string(c) && LEN_STR(q, c) && !is_nil(c)) {
-			if (search_op(q->st.m, GET_STR(q, c), NULL, false))
+		if (is_atom(c) && !is_string(c) && C_STRLEN(q, c) && !is_nil(c)) {
+			if (search_op(q->st.m, C_STR(q, c), NULL, false)
+				&& !needs_quoting(q->st.m, C_STR(q, c), C_STRLEN(q, c)))
 				parens = true;
 
 			if (!parens) {
-				const char *src = GET_STR(q, c);
+				const char *src = C_STR(q, c);
 				int ch = peek_char_utf8(src);
 
 				if (!iswalpha(ch) && (ch != '_'))
@@ -360,6 +371,7 @@ void dump_vars(query *q, bool partial)
 		print_term(q, stdout, c, c_ctx, 1);
 
 		if (parens) fputc(')', stdout);
+		if (q->last_thing_was_symbol) space = true;
 		if (q->did_quote) space = false;
 		q->quoted = saveq;
 		q->numbervars = false;
@@ -379,8 +391,9 @@ void dump_vars(query *q, bool partial)
 	if (any_atts) {
 		q->variable_names = vlist;
 		q->variable_names_ctx = 0;
+		q->tab_idx = 0;
 		cell p1;
-		make_literal(&p1, index_from_pool(q->pl, "dump_attvars"));
+		make_atom(&p1, index_from_pool(q->pl, "dump_attvars"));
 		cell *tmp = clone_to_heap(q, false, &p1, 1);
 		pl_idx_t nbr_cells = 0 + p1.nbr_cells;
 		make_end(tmp+nbr_cells);
@@ -393,6 +406,7 @@ void dump_vars(query *q, bool partial)
 
 	g_tpl_interrupt = false;
 	q->is_dump_vars = false;
+	q->is_input = false;
 
 	if (any && !partial) {
 		if (space) fprintf(stdout, " ");

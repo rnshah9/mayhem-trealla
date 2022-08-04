@@ -1,5 +1,3 @@
-:- use_module(library(lists)).
-
 % PVR 20/07/92: Added entry declaration for move/5 (it is used in a bagof).
 
 % ------------------------------------------------------------------------------
@@ -124,12 +122,12 @@ ply_depth(3).         % Depth of alpha-beta search
 player(white).
 computer(black).
 
-value(king, 10000) :- ! .
-value(queen,  900) :- ! .
-value(rook,   500) :- ! .
-value(night,  300) :- ! .
-value(bishop, 300) :- ! .
-value(pawn,   100) :- ! .
+value(king, 10000).
+value(queen,  900).
+value(rook,   500).
+value(night,  300).
+value(bishop, 300).
+value(pawn,   100).
 
 
 % ------------------------------------------------------------------------------
